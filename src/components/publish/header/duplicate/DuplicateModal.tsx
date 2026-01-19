@@ -1,16 +1,17 @@
-import { AFConfigContext } from '@/components/main/app.hooks';
 import React, { useCallback, useContext, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { NormalModal } from '@/components/_shared/modal';
-import SelectWorkspace from '@/components/publish/header/duplicate/SelectWorkspace';
-import { useLoadWorkspaces } from '@/components/publish/header/duplicate/useDuplicate';
-import SpaceList from '@/components/publish/header/duplicate/SpaceList';
-import { downloadPage, openAppFlowySchema } from '@/utils/url';
+
 import { PublishContext } from '@/application/publish';
 import { Types, ViewLayout } from '@/application/types';
+import { NormalModal } from '@/components/_shared/modal';
 import { notify } from '@/components/_shared/notify';
+import { AFConfigContext } from '@/components/main/app.hooks';
+import SelectWorkspace from '@/components/publish/header/duplicate/SelectWorkspace';
+import SpaceList from '@/components/publish/header/duplicate/SpaceList';
+import { useLoadWorkspaces } from '@/components/publish/header/duplicate/useDuplicate';
+import { downloadPage, openAppFlowySchema } from '@/utils/url';
 
-function getCollabTypeFromViewLayout (layout: ViewLayout) {
+function getCollabTypeFromViewLayout(layout: ViewLayout) {
   switch (layout) {
     case ViewLayout.Document:
       return Types.Document;
@@ -23,7 +24,7 @@ function getCollabTypeFromViewLayout (layout: ViewLayout) {
   }
 }
 
-function DuplicateModal ({ open, onClose }: { open: boolean; onClose: () => void }) {
+function DuplicateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const service = useContext(AFConfigContext)?.service;
   const viewMeta = useContext(PublishContext)?.viewMeta;
@@ -32,6 +33,7 @@ function DuplicateModal ({ open, onClose }: { open: boolean; onClose: () => void
   const [loading, setLoading] = React.useState<boolean>(false);
   const [successModalOpen, setSuccessModalOpen] = React.useState<boolean>(false);
   const [newViewId, setNewViewId] = React.useState<string | undefined>(undefined);
+  const [databaseMappings, setDatabaseMappings] = React.useState<Record<string, string[]> | undefined>(undefined);
   const {
     workspaceList,
     spaceList,
@@ -65,7 +67,7 @@ function DuplicateModal ({ open, onClose }: { open: boolean; onClose: () => void
 
     setLoading(true);
     try {
-      const newViewId = await service?.duplicatePublishView({
+      const response = await service?.duplicatePublishView({
         workspaceId: selectedWorkspaceId,
         spaceViewId: selectedSpaceId,
         viewId,
@@ -74,9 +76,11 @@ function DuplicateModal ({ open, onClose }: { open: boolean; onClose: () => void
 
       onClose();
       setSuccessModalOpen(true);
-      setNewViewId(newViewId);
+      setNewViewId(response?.viewId);
+      setDatabaseMappings(response?.databaseMappings);
     } catch (e) {
       setNewViewId(undefined);
+      setDatabaseMappings(undefined);
       notify.error(t('publish.duplicateFailed'));
     } finally {
       setLoading(false);
@@ -123,29 +127,39 @@ function DuplicateModal ({ open, onClose }: { open: boolean; onClose: () => void
         cancelText={t('openInApp')}
         onOk={() => {
           if (!newViewId || !selectedWorkspaceId) return;
-          window.open(`/app/${selectedWorkspaceId}/${newViewId}`, '_self');
+          let url = `/app/${selectedWorkspaceId}/${newViewId}`;
+
+          // Pass database mappings as URL parameter so the app can use them immediately
+          // without waiting for workspace database sync
+          if (databaseMappings && Object.keys(databaseMappings).length > 0) {
+            const encodedMappings = encodeURIComponent(JSON.stringify(databaseMappings));
+
+            url += `?db_mappings=${encodedMappings}`;
+          }
+
+          window.open(url, '_self');
         }}
         onCancel={() => {
           window.open(openAppFlowySchema, '_self');
         }}
         onClose={() => setSuccessModalOpen(false)}
         open={successModalOpen}
-        title={
-          <div className={'text-left'}>
-            {t('addToWorkspace')}
-          </div>
-        }
+        title={<div className={'text-left'}>{t('addToWorkspace')}</div>}
       >
-        <div className={'w-full whitespace-pre-wrap break-words pb-1 text-text-caption'}>
+        <div className={'w-full whitespace-pre-wrap break-words pb-1 text-text-secondary'}>
           <Trans
-            i18nKey="downloadTip"
+            i18nKey='downloadTip'
             components={{
-              link: <span
-                onClick={() => {
-                  window.open(downloadPage, '_blank');
-                }}
-                className={'hover:underline cursor-pointer text-fill-default'}
-              >{t('here')}</span>,
+              link: (
+                <span
+                  onClick={() => {
+                    window.open(downloadPage, '_blank');
+                  }}
+                  className={'cursor-pointer text-text-action hover:underline'}
+                >
+                  {t('here')}
+                </span>
+              ),
             }}
           />
         </div>

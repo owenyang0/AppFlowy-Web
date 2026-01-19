@@ -1,14 +1,15 @@
+import { Button, Collapse, OutlinedInput, Skeleton } from '@mui/material';
+import { debounce } from 'lodash-es';
+import React, { useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
+
 import { TemplateCategory, TemplateSummary } from '@/application/template.type';
+import { ReactComponent as RightIcon } from '@/assets/icons/alt_arrow_right.svg';
+import { ReactComponent as SearchIcon } from '@/assets/icons/search.svg';
 import { useLoadCategoryTemplates } from '@/components/as-template/hooks';
 import { CategoryIcon } from '@/components/as-template/icons';
 import CategoryTemplateItem from '@/components/as-template/related-template/CategoryTemplateItem';
-import { debounce } from 'lodash-es';
-import React, { useEffect, useMemo } from 'react';
-import { Button, Collapse, OutlinedInput, Skeleton } from '@mui/material';
-import { ReactComponent as RightIcon } from '@/assets/icons/alt_arrow_right.svg';
-import { ReactComponent as SearchIcon } from '@/assets/icons/search.svg';
-import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
 
 function CategoryTemplates({
   category,
@@ -63,7 +64,10 @@ function CategoryTemplates({
 
   return (
     <div className={'flex flex-col gap-2'}>
-      <Button onClick={handleClick} className={'flex items-center justify-between gap-2 font-medium text-text-caption'}>
+      <Button
+        onClick={handleClick}
+        className={'flex items-center justify-between gap-2 font-medium text-text-secondary'}
+      >
         <CategoryIcon icon={category.icon} />
         <div className={'flex-1 text-left'}>{category.name}</div>
         <RightIcon className={`h-5 w-5 ${open ? 'rotate-90 transform' : ''}`} />
@@ -74,7 +78,7 @@ function CategoryTemplates({
           fullWidth
           value={searchText}
           className={'mb-2 gap-2'}
-          startAdornment={<SearchIcon className={'h-5 w-5'}/>}
+          startAdornment={<SearchIcon className={'h-5 w-5'} />}
           placeholder={t('template.searchInCategory', {
             category: category.name,
           })}

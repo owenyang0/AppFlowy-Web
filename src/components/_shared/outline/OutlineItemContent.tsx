@@ -1,10 +1,11 @@
-import { UIVariant, View } from '@/application/types';
-import SpaceIcon from '@/components/_shared/view-icon/SpaceIcon';
-import PublishIcon from '@/components/_shared/view-icon/PublishIcon';
 import { Tooltip } from '@mui/material';
 import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { UIVariant, View } from '@/application/types';
 import PageIcon from '@/components/_shared/view-icon/PageIcon';
+import PublishIcon from '@/components/_shared/view-icon/PublishIcon';
+import SpaceIcon from '@/components/_shared/view-icon/SpaceIcon';
 
 function OutlineItemContent({
   item,
@@ -63,7 +64,7 @@ function OutlineItemContent({
         title={name}
         disableInteractive={true}
       >
-        <div className={'flex-1 truncate'}>{name || t('menuAppHeader.defaultNewPageName')}</div>
+        <div data-testid={isSpace ? 'space-name' : 'page-name'} className={'flex-1 truncate'}>{name || t('menuAppHeader.defaultNewPageName')}</div>
       </Tooltip>
       {hovered && variant === UIVariant.Publish && <PublishIcon
         variant={variant}

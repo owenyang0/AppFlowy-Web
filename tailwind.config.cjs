@@ -6,6 +6,7 @@ module.exports = {
   content: [
     './index.html',
     './src/**/*.{js,ts,jsx,tsx}',
+    './.storybook/**/*.{js,ts,jsx,tsx}',
     './node_modules/react-tailwindcss-datepicker/dist/index.esm.js',
   ],
   important: '#body',
@@ -34,6 +35,15 @@ module.exports = {
         md: '12px',
         lg: '16px',
         xl: '20px',
+      },
+      keyframes: {
+        blink: {
+          '0%, 50%': { opacity: '1' },
+          '51%, 100%': { opacity: '0' },
+        },
+      },
+      animation: {
+        blink: 'blink 1s infinite',
       },
     },
   },

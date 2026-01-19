@@ -1,54 +1,48 @@
-import { CoverType, ViewMetaCover } from '@/application/types';
-import { useAppHandlers, useAppViewId, useOpenModalViewId } from '@/components/app/app.hooks';
 import React, { useMemo } from 'react';
-import { PopoverOrigin, PopoverProps } from '@mui/material/Popover';
-import { EmbedLink, Unsplash, UploadTabs, TabOption, TAB_KEY, UploadImage } from '@/components/_shared/image-upload';
 import { useTranslation } from 'react-i18next';
+
+import { CoverType, ViewMetaCover } from '@/application/types';
+import { EmbedLink, TAB_KEY, TabOption, Unsplash, UploadImage, UploadPopover } from '@/components/_shared/image-upload';
+import { useAppHandlers, useAppViewId, useOpenModalViewId } from '@/components/app/app.hooks';
+import { useSubscriptionPlan } from '@/components/app/hooks/useSubscriptionPlan';
+import { GradientEnum } from '@/utils/color';
+
 import Colors from './CoverColors';
 
-const initialOrigin: {
-  anchorOrigin: PopoverOrigin;
-  transformOrigin: PopoverOrigin;
-} = {
-  anchorOrigin: {
-    vertical: 'bottom',
-    horizontal: 'center',
-  },
-  transformOrigin: {
-    vertical: -20,
-    horizontal: 'center',
-  },
-};
-
-function CoverPopover ({
-  anchorPosition,
+function CoverPopover({
+  coverValue,
   open,
-  onClose,
+  onOpenChange,
   onUpdateCover,
+  children,
 }: {
-  anchorPosition?: PopoverProps['anchorPosition'];
+  coverValue?: string;
   open: boolean;
-  onClose: () => void;
+  onOpenChange: (open: boolean) => void;
   onUpdateCover?: (cover: ViewMetaCover) => void;
+  children: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const {
-    uploadFile,
-  } = useAppHandlers();
+  const { uploadFile, getSubscriptions } = useAppHandlers();
   const appViewId = useAppViewId();
   const modalViewId = useOpenModalViewId();
   const viewId = modalViewId || appViewId;
+
+  const { isPro } = useSubscriptionPlan(getSubscriptions);
 
   const tabOptions: TabOption[] = useMemo(() => {
     return [
       {
         label: t('document.plugins.cover.colors'),
         key: TAB_KEY.Colors,
-        Component: Colors,
+        Component: (props) => <Colors {...props} isPro={isPro} selectedColor={coverValue} />,
         onDone: (value: string) => {
+          const isGradient = Object.values(GradientEnum).includes(value as GradientEnum);
+
           onUpdateCover?.({
-            type: CoverType.NormalColor,
+            type: isGradient ? CoverType.GradientColor : CoverType.NormalColor,
             value,
+            offset: 0,
           });
         },
       },
@@ -64,8 +58,9 @@ function CoverPopover ({
           onUpdateCover?.({
             type: CoverType.CustomImage,
             value,
+            offset: 0,
           });
-          onClose();
+          onOpenChange(false);
         },
       },
       {
@@ -76,8 +71,9 @@ function CoverPopover ({
           onUpdateCover?.({
             type: CoverType.CustomImage,
             value,
+            offset: 0,
           });
-          onClose();
+          onOpenChange(false);
         },
       },
       {
@@ -88,29 +84,17 @@ function CoverPopover ({
           onUpdateCover?.({
             type: CoverType.UpsplashImage,
             value,
+            offset: 0,
           });
         },
       },
     ];
-  }, [onClose, onUpdateCover, t, uploadFile, viewId]);
+  }, [coverValue, isPro, onOpenChange, onUpdateCover, t, uploadFile, viewId]);
 
   return (
-    <UploadTabs
-      popoverProps={{
-        anchorPosition,
-        open,
-        onClose,
-        ...initialOrigin,
-        anchorReference: 'anchorPosition',
-        sx: {
-          '& .MuiPaper-root': {
-            margin: '10px 0',
-          },
-        },
-      }}
-      containerStyle={{ width: 433, maxHeight: 500 }}
-      tabOptions={tabOptions}
-    />
+    <UploadPopover open={open} onOpenChange={onOpenChange} tabOptions={tabOptions}>
+      {children}
+    </UploadPopover>
   );
 }
 

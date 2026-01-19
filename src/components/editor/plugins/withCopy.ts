@@ -1,8 +1,9 @@
-import { ReactEditor } from 'slate-react';
 import { Range } from 'slate';
-import { getBlockEntry } from '@/application/slate-yjs/utils/editor';
+import { ReactEditor } from 'slate-react';
+
 import { YjsEditor } from '@/application/slate-yjs';
 import { isEmbedBlockTypes } from '@/application/slate-yjs/command/const';
+import { getBlockEntry } from '@/application/slate-yjs/utils/editor';
 import { BlockType } from '@/application/types';
 
 export const clipboardFormatKey = 'x-appflowy-fragment';
@@ -18,7 +19,11 @@ export const withCopy = (editor: ReactEditor) => {
     }
 
     if (Range.isCollapsed(selection)) {
-      const [node] = getBlockEntry(editor as YjsEditor);
+      const entry = getBlockEntry(editor as YjsEditor);
+
+      if (!entry) return;
+
+      const [node] = entry;
 
       if (node && isEmbedBlockTypes(node.type as BlockType)) {
         const fragment = editor.getFragment();
@@ -31,7 +36,7 @@ export const withCopy = (editor: ReactEditor) => {
       return;
     }
 
-    setFragmentData(<DataTransfer>data);
+    setFragmentData(data as DataTransfer);
   };
 
   return editor;

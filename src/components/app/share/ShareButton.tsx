@@ -1,10 +1,13 @@
-import { ViewLayout } from '@/application/types';
-import { Popover } from '@/components/_shared/popover';
-import { useAppView } from '@/components/app/app.hooks';
-import ShareTabs from '@/components/app/share/ShareTabs';
-import { Button } from '@mui/material';
-import React, { useRef } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { ViewLayout } from '@/application/types';
+import { NormalModal } from '@/components/_shared/modal';
+import { useAppView } from '@/components/app/app.hooks';
+import { PublishManage } from '@/components/app/publish-manage';
+import ShareTabs from '@/components/app/share/ShareTabs';
+import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 export function ShareButton({ viewId }: { viewId: string }) {
   const { t } = useTranslation();
@@ -12,49 +15,57 @@ export function ShareButton({ viewId }: { viewId: string }) {
   const view = useAppView(viewId);
   const layout = view?.layout;
   const [opened, setOpened] = React.useState(false);
-  const ref = useRef<HTMLButtonElement>(null);
+  const [publishManageOpen, setPublishManageOpen] = React.useState(false);
 
-  if(layout === ViewLayout.AIChat) return null;
+  if (layout === ViewLayout.AIChat) return null;
 
   return (
     <>
-      <Button
-        className={'max-sm:hidden'}
-        onClick={() => {
-          setOpened(true);
-        }}
-        ref={ref}
-        size={'small'}
-        variant={'contained'}
-        color={'primary'}
-      >{t('shareAction.buttonText')}</Button>
-      <Popover
-        keepMounted
-        open={opened}
-        anchorEl={ref.current}
-        onClose={() => setOpened(false)}
-        sx={{
-          '& .MuiPopover-paper': {
-            margin: '8px 0',
-          },
-        }}
-        transformOrigin={{
-          vertical: 'top',
-          horizontal: 'center',
-        }}
-        anchorOrigin={{
-          vertical: 'bottom',
-          horizontal: 'center',
-        }}
-      >
-        <div className={'flex flex-col gap-2 w-fit p-2'}>
+      <Popover open={opened} onOpenChange={setOpened}>
+        <PopoverTrigger asChild>
+          <Button className={'mx-2'} data-testid={'share-button'} size={'sm'} variant={'default'}>
+            {t('shareAction.buttonText')}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          side='bottom'
+          align='end'
+          alignOffset={-20}
+          className={'h-fit min-w-[480px] max-w-[480px]'}
+          data-testid={'share-popover'}
+        >
           <ShareTabs
             opened={opened}
             viewId={viewId}
             onClose={() => setOpened(false)}
+            onOpenPublishManage={() => {
+              setOpened(false);
+              setPublishManageOpen(true);
+            }}
           />
-        </div>
+        </PopoverContent>
       </Popover>
+      <NormalModal
+        data-testid='publish-manage-modal'
+        open={publishManageOpen}
+        onClose={() => setPublishManageOpen(false)}
+        scroll='paper'
+        overflowHidden
+        okButtonProps={{
+          className: 'hidden',
+        }}
+        cancelButtonProps={{
+          className: 'hidden',
+        }}
+        classes={{
+          paper: 'w-[700px] appflowy-scroller max-w-[90vw] max-h-[90vh] h-[600px] overflow-hidden',
+        }}
+        title={<div className={'flex items-center justify-start'}>{t('settings.sites.title')}</div>}
+      >
+        <div className={'h-full w-full overflow-y-auto overflow-x-hidden'}>
+          <PublishManage onClose={() => setPublishManageOpen(false)} />
+        </div>
+      </NormalModal>
     </>
   );
 }

@@ -1,34 +1,73 @@
-import {
-  FieldId, RowCoverType,
-  SortId,
-  YDatabase,
-  YDatabaseField, YDatabaseMetas, YDatabaseRow,
-  YjsDatabaseKey,
-  YjsEditorKey,
-} from '@/application/types';
-import { getCell, metaIdFromRowId, MIN_COLUMN_WIDTH } from '@/application/database-yjs/const';
-import {
-  useDatabase,
-  useDatabaseFields,
-  useDatabaseView,
-  useRowDocMap,
-  useDatabaseViewId,
-} from '@/application/database-yjs/context';
-import { filterBy, parseFilter } from '@/application/database-yjs/filter';
-import { groupByField } from '@/application/database-yjs/group';
-import { sortBy } from '@/application/database-yjs/sort';
-import { parseYDatabaseCellToCell } from '@/application/database-yjs/cell.parse';
-import { DateTimeCell } from '@/application/database-yjs/cell.type';
 import dayjs from 'dayjs';
 import { debounce } from 'lodash-es';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarLayoutSetting, FieldType, FieldVisibility, Filter, RowMetaKey, SortCondition } from './database.type';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { parseYDatabaseCellToCell } from '@/application/database-yjs/cell.parse';
+import { DateTimeCell, RollupCell } from '@/application/database-yjs/cell.type';
+import { getCell, MIN_COLUMN_WIDTH } from '@/application/database-yjs/const';
+import {
+  useDatabase,
+  useDatabaseContext,
+  useDatabaseFields,
+  useDatabaseView,
+  useDatabaseViewId,
+  useRow,
+  useRowDocMap,
+} from '@/application/database-yjs/context';
+import {
+  getDateCellStr,
+  getFieldDateTimeFormats,
+  getTypeOptions,
+  parseRelationTypeOption,
+  parseRollupTypeOption,
+  parseSelectOptionTypeOptions,
+  SelectOption,
+} from '@/application/database-yjs/fields';
+import { filterBy, parseFilter } from '@/application/database-yjs/filter';
+import { groupByField } from '@/application/database-yjs/group';
+import {
+  invalidateRelationCell,
+  readRelationCellText,
+  subscribeRelationCache,
+} from '@/application/database-yjs/relation/cache';
+import {
+  invalidateRollupCell,
+  readRollupCell,
+  readRollupCellSync,
+  RollupCellValue,
+  subscribeRollupCell,
+  subscribeRollupCache,
+} from '@/application/database-yjs/rollup/cache';
+import { getMetaJSON, getRowKey } from '@/application/database-yjs/row_meta';
+import { openCollabDBWithProvider } from '@/application/db';
+import { sortBy } from '@/application/database-yjs/sort';
+import {
+  DatabaseViewLayout,
+  FieldId,
+  SortId,
+  TimeFormat,
+  YDatabase,
+  YDatabaseCell,
+  YDatabaseField,
+  YDatabaseMetas,
+  YDatabaseRow,
+  YDoc,
+  YjsDatabaseKey,
+  YjsEditorKey,
+  YSharedRoot,
+} from '@/application/types';
+import { MetadataKey } from '@/application/user-metadata';
+import { useCurrentUser } from '@/components/main/app.hooks';
+import { getDateFormat, getTimeFormat, renderDate } from '@/utils/time';
+
+import { CalendarLayoutSetting, FieldType, FieldVisibility, Filter, RowMeta, SortCondition } from './database.type';
 
 export interface Column {
   fieldId: string;
   width: number;
   visibility: FieldVisibility;
   wrap?: boolean;
+  isPrimary: boolean;
 }
 
 export interface Row {
@@ -38,17 +77,26 @@ export interface Row {
 
 const defaultVisible = [FieldVisibility.AlwaysShown, FieldVisibility.HideWhenEmpty];
 
-export function useDatabaseViewsSelector (_iidIndex: string, visibleViewIds?: string[]) {
+/**
+ * Hook to get all database views (tabs) for the database.
+ * @param databasePageId - The main database page ID in the folder structure
+ * @param visibleViewIds - Optional filter for embedded databases to show only specific views
+ */
+export function useDatabaseViewsSelector(databasePageId: string, visibleViewIds?: string[]) {
   const database = useDatabase();
 
   const views = database?.get(YjsDatabaseKey.views);
   const [viewIds, setViewIds] = useState<string[]>([]);
-  const childViews = useMemo(() => {
-    return viewIds.map((viewId) => views?.get(viewId));
-  }, [viewIds, views]);
+  const [childViews, setChildViews] = useState<ReturnType<typeof views.get>[]>([]);
+
+  // Stabilize visibleViewIds reference to avoid unnecessary effect re-runs
+  const visibleViewIdsKey = visibleViewIds?.join(',') ?? '';
 
   useEffect(() => {
     if (!views) return;
+
+    // Parse the stabilized key back to array (or undefined)
+    const stableVisibleViewIds = visibleViewIdsKey ? visibleViewIdsKey.split(',') : undefined;
 
     const observerEvent = () => {
       const viewsObj = views.toJSON() as Record<
@@ -58,29 +106,48 @@ export function useDatabaseViewsSelector (_iidIndex: string, visibleViewIds?: st
         }
       >;
 
-      const viewsSorted = Object.entries(viewsObj).sort((a, b) => {
-        const [, viewA] = a;
-        const [, viewB] = b;
+      // Step 1: Get all non-inline views from Yjs (don't filter by embedded yet)
+      // See: flowy-database2/src/services/database/database_editor.rs:get_database_view_ids()
+      let allViewIds = Object.keys(viewsObj).filter((viewId) => {
+        const view = views.get(viewId);
 
-        return Date.parse(viewB.created_at) - Date.parse(viewA.created_at);
+        if (!view) return false;
+
+        const isInline = view.get(YjsDatabaseKey.is_inline);
+
+        return !isInline;
       });
 
-      setViewIds(
-        viewsSorted
-          .map(([key]) => key)
-          .filter((id) => {
-            return !visibleViewIds || visibleViewIds.includes(id);
-          }),
-      );
+      // Step 2: Apply context-specific filtering (separate concerns)
+      if (stableVisibleViewIds !== undefined && stableVisibleViewIds.length > 0) {
+        // For embedded databases: show ONLY views in visibleViewIds
+        // This handles views with embedded: true (created via + button)
+        // The visibleViewIds list is the source of truth for what to display
+        const allViewIdsSet = new Set(allViewIds);
+
+        allViewIds = stableVisibleViewIds.filter((viewId) => allViewIdsSet.has(viewId));
+      } else {
+        // For standalone databases: exclude embedded views
+        // Embedded views belong to their respective embedded database blocks
+        allViewIds = allViewIds.filter((viewId) => {
+          const view = views.get(viewId);
+          const isEmbedded = view?.get(YjsDatabaseKey.embedded) === true;
+
+          return !isEmbedded;
+        });
+      }
+
+      setViewIds(allViewIds);
+      setChildViews(allViewIds.map((viewId) => views.get(viewId)));
     };
 
     observerEvent();
-    views.observe(observerEvent);
+    views.observeDeep(observerEvent);
 
     return () => {
-      views.unobserve(observerEvent);
+      views.unobserveDeep(observerEvent);
     };
-  }, [views, visibleViewIds]);
+  }, [views, visibleViewIdsKey]);
 
   return {
     childViews,
@@ -88,33 +155,62 @@ export function useDatabaseViewsSelector (_iidIndex: string, visibleViewIds?: st
   };
 }
 
-export function useFieldsSelector (visibilitys: FieldVisibility[] = defaultVisible) {
-  const viewId = useDatabaseViewId();
+export function useDatabaseViewLayout() {
+  const view = useDatabaseView();
+
+  const [layout, setLayout] = useState<DatabaseViewLayout | null>(null);
+
+  useEffect(() => {
+    const observerEvent = () => {
+      const layoutValue = view?.get(YjsDatabaseKey.layout);
+
+      if (layoutValue !== undefined) {
+        setLayout(Number(layoutValue) as DatabaseViewLayout);
+      } else {
+        setLayout(null);
+      }
+    };
+
+    observerEvent();
+
+    view?.observe(observerEvent);
+    return () => {
+      view?.unobserve(observerEvent);
+    };
+  }, [view]);
+
+  return layout;
+}
+
+export function useFieldsSelector(visibilitys: FieldVisibility[] = defaultVisible) {
+  const view = useDatabaseView();
   const database = useDatabase();
   const [columns, setColumns] = useState<Column[]>([]);
 
   useEffect(() => {
-    if (!viewId) return;
-    const view = database?.get(YjsDatabaseKey.views)?.get(viewId);
+    if (!view) return;
     const fields = database?.get(YjsDatabaseKey.fields);
     const fieldsOrder = view?.get(YjsDatabaseKey.field_orders);
     const fieldSettings = view?.get(YjsDatabaseKey.field_settings);
     const getColumns = () => {
-      if (!fields || !fieldsOrder || !fieldSettings) return [];
+      if (!fields || !fieldsOrder) return [];
 
       const fieldIds = (fieldsOrder.toJSON() as { id: string }[]).map((item) => item.id);
 
       return fieldIds
         .map((fieldId) => {
-          const setting = fieldSettings.get(fieldId);
+          const setting = fieldSettings?.get(fieldId);
+          const field = fields.get(fieldId);
 
           return {
             fieldId,
+            isPrimary: field?.get(YjsDatabaseKey.is_primary),
             width: parseInt(setting?.get(YjsDatabaseKey.width)) || MIN_COLUMN_WIDTH,
             visibility: Number(
-              setting?.get(YjsDatabaseKey.visibility) || FieldVisibility.AlwaysShown,
+              setting?.get(YjsDatabaseKey.visibility) || FieldVisibility.AlwaysShown
             ) as FieldVisibility,
             wrap: setting?.get(YjsDatabaseKey.wrap) ?? true,
+            fieldType: Number(field?.get(YjsDatabaseKey.type)) as FieldType,
           };
         })
         .filter((column) => {
@@ -126,37 +222,114 @@ export function useFieldsSelector (visibilitys: FieldVisibility[] = defaultVisib
 
     setColumns(getColumns());
 
-    fieldsOrder?.observe(observerEvent);
-    fieldSettings?.observe(observerEvent);
+    fieldsOrder?.observeDeep(observerEvent);
+    fieldSettings?.observeDeep(observerEvent);
+    fields?.observe(observerEvent);
 
     return () => {
-      fieldsOrder?.unobserve(observerEvent);
-      fieldSettings?.unobserve(observerEvent);
+      fieldsOrder?.unobserveDeep(observerEvent);
+      fieldSettings?.unobserveDeep(observerEvent);
+      fields?.unobserve(observerEvent);
     };
-  }, [database, viewId, visibilitys]);
+  }, [database, view, visibilitys]);
 
   return columns;
 }
 
-export function useFieldSelector (fieldId: string) {
+export function useFieldType(fieldId: string) {
   const database = useDatabase();
-  const [field, setField] = useState<YDatabaseField | null>(null);
+  const field = database?.get(YjsDatabaseKey.fields)?.get(fieldId);
+  const [fieldType, setFieldType] = useState<FieldType>(FieldType.RichText);
+
+  useEffect(() => {
+    if (!field) return;
+
+    const observerEvent = () => {
+      setFieldType(Number(field.get(YjsDatabaseKey.type)) as FieldType);
+    };
+
+    observerEvent();
+
+    field.observe(observerEvent);
+
+    return () => {
+      field.unobserve(observerEvent);
+    };
+  }, [database, field]);
+
+  return fieldType;
+}
+
+export function useFieldVisibility(fieldId: string) {
+  const view = useDatabaseView();
+  const fieldSettings = view?.get(YjsDatabaseKey.field_settings);
+  const fieldSetting = fieldSettings?.get(fieldId);
+
+  const [visibility, setVisibility] = useState<FieldVisibility>(
+    Number(fieldSetting?.get(YjsDatabaseKey.visibility)) ?? FieldVisibility.AlwaysShown
+  );
+
+  useEffect(() => {
+    if (!view) return;
+
+    const observerEvent = () => {
+      setVisibility(Number(fieldSetting?.get(YjsDatabaseKey.visibility)) ?? FieldVisibility.AlwaysShown);
+    };
+
+    observerEvent();
+
+    fieldSettings?.observeDeep(observerEvent);
+
+    return () => {
+      fieldSettings?.unobserveDeep(observerEvent);
+    };
+  }, [view, fieldId, fieldSettings, fieldSetting]);
+
+  return visibility;
+}
+
+export function useFieldWrap(fieldId: string) {
+  const view = useDatabaseView();
+  const database = useDatabase();
+  const fieldSettings = view?.get(YjsDatabaseKey.field_settings);
+  const fieldSetting = fieldSettings?.get(fieldId);
+
+  const [wrap, setWrap] = useState(fieldSetting?.get(YjsDatabaseKey.wrap) ?? true);
+
+  useEffect(() => {
+    if (!view) return;
+
+    const observerEvent = () => {
+      setWrap(fieldSetting?.get(YjsDatabaseKey.wrap) ?? true);
+    };
+
+    observerEvent();
+
+    fieldSettings?.observeDeep(observerEvent);
+
+    return () => {
+      fieldSettings?.unobserveDeep(observerEvent);
+    };
+  }, [database, view, fieldId, fieldSettings, fieldSetting]);
+
+  return wrap;
+}
+
+export function useFieldSelector(fieldId: string) {
+  const database = useDatabase();
   const [clock, setClock] = useState<number>(0);
+  const field = database.get(YjsDatabaseKey.fields)?.get(fieldId);
 
   useEffect(() => {
     if (!database) return;
-
-    const field = database.get(YjsDatabaseKey.fields)?.get(fieldId);
-
-    setField(field || null);
     const observerEvent = () => setClock((prev) => prev + 1);
 
-    field?.observe(observerEvent);
+    field?.observeDeep(observerEvent);
 
     return () => {
-      field?.unobserve(observerEvent);
+      field?.unobserveDeep(observerEvent);
     };
-  }, [database, fieldId]);
+  }, [database, field, fieldId]);
 
   return {
     field,
@@ -164,10 +337,34 @@ export function useFieldSelector (fieldId: string) {
   };
 }
 
-export function useFiltersSelector () {
+export function useDatabaseIdFromField(fieldId: string) {
+  const database = useDatabase();
+  const field = database?.get(YjsDatabaseKey.fields)?.get(fieldId);
+  const [databaseId, setDatabaseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!field) return;
+
+    const observerEvent = () => {
+      setDatabaseId(parseRelationTypeOption(field)?.database_id);
+    };
+
+    observerEvent();
+
+    field.observe(observerEvent);
+
+    return () => {
+      field.unobserve(observerEvent);
+    };
+  }, [database, field, fieldId]);
+
+  return databaseId;
+}
+
+export function useFiltersSelector() {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
-  const [filters, setFilters] = useState<string[]>([]);
+  const [filters, setFilters] = useState<{ id: string; fieldId: string }[]>([]);
 
   useEffect(() => {
     if (!viewId) return;
@@ -177,12 +374,19 @@ export function useFiltersSelector () {
     if (!filterOrders) return;
 
     const getFilters = () => {
-      return (filterOrders.toJSON() as { id: string }[]).map((item) => item.id);
+      return (filterOrders.toJSON() as { id: string; field_id: string }[]).map((item) => {
+        return {
+          id: item.id,
+          fieldId: item.field_id,
+        };
+      });
     };
 
-    const observerEvent = () => setFilters(getFilters());
+    const observerEvent = () => {
+      setFilters(getFilters());
+    };
 
-    setFilters(getFilters());
+    observerEvent();
 
     filterOrders.observe(observerEvent);
 
@@ -194,7 +398,7 @@ export function useFiltersSelector () {
   return filters;
 }
 
-export function useFilterSelector (filterId: string) {
+export function useFilterSelector(filterId: string) {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
   const fields = database?.get(YjsDatabaseKey.fields);
@@ -227,10 +431,10 @@ export function useFilterSelector (filterId: string) {
   return filterValue;
 }
 
-export function useSortsSelector () {
+export function useSortsSelector() {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
-  const [sorts, setSorts] = useState<string[]>([]);
+  const [sorts, setSorts] = useState<{ id: string; fieldId: string }[]>([]);
 
   useEffect(() => {
     if (!viewId) return;
@@ -240,7 +444,12 @@ export function useSortsSelector () {
     if (!sortOrders) return;
 
     const getSorts = () => {
-      return (sortOrders.toJSON() as { id: string }[]).map((item) => item.id);
+      return (sortOrders.toJSON() as { id: string; field_id: string }[]).map((item) => {
+        return {
+          id: item.id,
+          fieldId: item.field_id,
+        };
+      });
     };
 
     const observerEvent = () => setSorts(getSorts());
@@ -263,7 +472,7 @@ export interface Sort {
   id: SortId;
 }
 
-export function useSortSelector (sortId: SortId) {
+export function useSortSelector(sortId: SortId) {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
   const [sortValue, setSortValue] = useState<Sort | null>(null);
@@ -296,7 +505,7 @@ export function useSortSelector (sortId: SortId) {
   return sortValue;
 }
 
-export function useGroupsSelector () {
+export function useGroupsSelector() {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
   const [groups, setGroups] = useState<string[]>([]);
@@ -310,17 +519,17 @@ export function useGroupsSelector () {
     if (!groupOrders) return;
 
     const getGroups = () => {
-      return (groupOrders.toJSON() as { id: string }[]).map((item) => item.id);
+      return groupOrders.toArray().map((item) => item.get(YjsDatabaseKey.id));
     };
 
     const observerEvent = () => setGroups(getGroups());
 
     setGroups(getGroups());
 
-    groupOrders.observe(observerEvent);
+    groupOrders.observeDeep(observerEvent);
 
     return () => {
-      groupOrders.unobserve(observerEvent);
+      groupOrders.unobserveDeep(observerEvent);
     };
   }, [database, viewId]);
 
@@ -332,7 +541,7 @@ export interface GroupColumn {
   visible: boolean;
 }
 
-export function useGroup (groupId: string) {
+export function useGroup(groupId: string) {
   const database = useDatabase();
   const viewId = useDatabaseViewId();
   const view = database?.get(YjsDatabaseKey.views)?.get(viewId);
@@ -340,33 +549,29 @@ export function useGroup (groupId: string) {
     ?.get(YjsDatabaseKey.groups)
     ?.toArray()
     .find((group) => group.get(YjsDatabaseKey.id) === groupId);
-  const groupColumns = group?.get(YjsDatabaseKey.groups);
   const [fieldId, setFieldId] = useState<string | null>(null);
   const [columns, setColumns] = useState<GroupColumn[]>([]);
 
   useEffect(() => {
-    if (!viewId) return;
+    if (!viewId || !group) return;
 
     const observerEvent = () => {
-      setFieldId(group?.get(YjsDatabaseKey.field_id) as string);
+      const groupFieldId = group.get(YjsDatabaseKey.field_id);
+
+      setFieldId(groupFieldId);
+      const groupColumnsVisible = group.get(YjsDatabaseKey.groups);
+      const visibleArray = groupColumnsVisible?.toArray() || [];
+
+      setColumns(visibleArray);
     };
 
     observerEvent();
-    group?.observe(observerEvent);
-
-    const observerColumns = () => {
-      if (!groupColumns) return;
-      setColumns(groupColumns.toJSON());
-    };
-
-    observerColumns();
-    groupColumns?.observe(observerColumns);
+    group?.observeDeep(observerEvent);
 
     return () => {
-      group?.unobserve(observerEvent);
-      groupColumns?.unobserve(observerColumns);
+      group?.unobserveDeep(observerEvent);
     };
-  }, [database, viewId, groupId, group, groupColumns]);
+  }, [database, viewId, groupId, group]);
 
   return {
     columns,
@@ -374,16 +579,91 @@ export function useGroup (groupId: string) {
   };
 }
 
-export function useRowsByGroup (groupId: string) {
+export function useBoardLayoutSettings() {
+  const view = useDatabaseView();
+  const layoutSetting = view?.get(YjsDatabaseKey.layout_settings)?.get('1');
+  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [hideUnGroup, setHideUnGroup] = useState(false);
+  const groups = view?.get(YjsDatabaseKey.groups);
+  const [fieldId, setFieldId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!layoutSetting) return;
+
+    const observerEvent = () => {
+      setIsCollapsed(Boolean(layoutSetting?.get(YjsDatabaseKey.collapse_hidden_groups)));
+      setHideUnGroup(Boolean(layoutSetting?.get(YjsDatabaseKey.hide_ungrouped_column)));
+    };
+
+    observerEvent();
+    layoutSetting.observe(observerEvent);
+
+    return () => {
+      layoutSetting.unobserve(observerEvent);
+    };
+  }, [view, layoutSetting]);
+
+  useEffect(() => {
+    const observerEvent = () => {
+      const group = groups?.toArray()?.[0];
+
+      if (!group) return;
+
+      const groupFieldId = group.get(YjsDatabaseKey.field_id);
+
+      setFieldId(groupFieldId);
+    };
+
+    observerEvent();
+    groups?.observeDeep(observerEvent);
+
+    return () => {
+      groups?.unobserveDeep(observerEvent);
+    };
+  }, [groups]);
+
+  return {
+    isCollapsed,
+    hideUnGroup,
+    fieldId,
+  };
+}
+
+export function useGetBoardHiddenGroup(groupId: string) {
+  const { columns, fieldId } = useGroup(groupId);
+  const [hiddenColumns, setHiddenColumns] = useState<GroupColumn[]>([]);
+  const { hideUnGroup } = useBoardLayoutSettings();
+
+  useEffect(() => {
+    if (!columns) return;
+
+    const hiddenColumns = columns.filter((column) => {
+      if (column.id === fieldId) return hideUnGroup;
+
+      return !column.visible;
+    });
+
+    setHiddenColumns(hiddenColumns);
+  }, [columns, fieldId, hideUnGroup]);
+
+  return {
+    hiddenColumns,
+  };
+}
+
+export function useRowsByGroup(groupId: string) {
   const { columns, fieldId } = useGroup(groupId);
   const rows = useRowDocMap();
   const rowOrders = useRowOrdersSelector();
+
+  const [visibleColumns, setVisibleColumns] = useState<GroupColumn[]>([]);
 
   const fields = useDatabaseFields();
   const [notFound, setNotFound] = useState(false);
   const [groupResult, setGroupResult] = useState<Map<string, Row[]>>(new Map());
   const view = useDatabaseView();
   const layoutSetting = view?.get(YjsDatabaseKey.layout_settings)?.get('1');
+  const filters = view?.get(YjsDatabaseKey.filters);
 
   useEffect(() => {
     if (!fieldId || !rowOrders || !rows) return;
@@ -399,7 +679,17 @@ export function useRowsByGroup (groupId: string) {
         return;
       }
 
-      const groupResult = groupByField(rowOrders, rows, field);
+      const fieldType = Number(field.get(YjsDatabaseKey.type)) as FieldType;
+
+      if (![FieldType.SingleSelect, FieldType.MultiSelect, FieldType.Checkbox].includes(fieldType)) {
+        setNotFound(true);
+        setGroupResult(newResult);
+        return;
+      }
+
+      const filter = filters?.toArray().find((filter) => filter.get(YjsDatabaseKey.field_id) === fieldId);
+
+      const groupResult = groupByField(rowOrders, rows, field, filter);
 
       if (!groupResult) {
         setGroupResult(newResult);
@@ -412,15 +702,46 @@ export function useRowsByGroup (groupId: string) {
     onConditionsChange();
 
     fields.observeDeep(onConditionsChange);
-    return () => {
-      fields.unobserveDeep(onConditionsChange);
-    };
-  }, [fieldId, fields, rowOrders, rows]);
+    filters?.observeDeep(onConditionsChange);
 
-  const visibleColumns = columns.filter((column) => {
-    if (column.id === fieldId) return !layoutSetting?.get(YjsDatabaseKey.hide_ungrouped_column);
-    return column.visible;
-  });
+    const debouncedConditionsChange = debounce(onConditionsChange, 150);
+
+    const observerRowsEvent = () => {
+      debouncedConditionsChange();
+    };
+
+    Object.values(rows).forEach((row) => {
+      row.getMap(YjsEditorKey.data_section).observeDeep(observerRowsEvent);
+    });
+    return () => {
+      debouncedConditionsChange.cancel();
+
+      fields.unobserveDeep(onConditionsChange);
+      filters?.unobserveDeep(onConditionsChange);
+      Object.values(rows).forEach((row) => {
+        row.getMap(YjsEditorKey.data_section).unobserveDeep(observerRowsEvent);
+      });
+    };
+  }, [fieldId, fields, rowOrders, rows, filters]);
+
+  useEffect(() => {
+    const observeEvent = () => {
+      const newVisibleColumns = columns.filter((column) => {
+        if (column.id === fieldId) return !layoutSetting?.get(YjsDatabaseKey.hide_ungrouped_column);
+        return column.visible;
+      });
+
+      setVisibleColumns(newVisibleColumns);
+    };
+
+    observeEvent();
+
+    layoutSetting?.observe(observeEvent);
+
+    return () => {
+      layoutSetting?.unobserve(observeEvent);
+    };
+  }, [layoutSetting, columns, fieldId]);
 
   return {
     fieldId,
@@ -430,19 +751,106 @@ export function useRowsByGroup (groupId: string) {
   };
 }
 
-export function useRowOrdersSelector () {
+export function useRowOrdersSelector() {
   const rows = useRowDocMap();
   const [rowOrders, setRowOrders] = useState<Row[]>();
+  const [cachedRowDocs, setCachedRowDocs] = useState<Record<string, YDoc>>({});
   const view = useDatabaseView();
   const sorts = view?.get(YjsDatabaseKey.sorts);
   const fields = useDatabaseFields();
   const filters = view?.get(YjsDatabaseKey.filters);
+  const database = useDatabase();
+  const { databaseDoc, loadView, createRowDoc, getViewIdFromDatabaseId } = useDatabaseContext();
+  const [rollupWatchVersion, setRollupWatchVersion] = useState(0);
+  const cachedRowDocsRef = useRef<Record<string, YDoc>>({});
+  const cachedRowDocPendingRef = useRef<Map<string, Promise<YDoc | undefined>>>(new Map());
+  const backgroundQueueRef = useRef<Set<string>>(new Set());
+  const backgroundLoadingRef = useRef(false);
+  const backgroundCancelledRef = useRef(false);
+
+  useEffect(() => {
+    cachedRowDocsRef.current = cachedRowDocs;
+  }, [cachedRowDocs]);
+
+  const rowDocsForConditions = useMemo(
+    () => ({ ...cachedRowDocs, ...(rows || {}) }),
+    [cachedRowDocs, rows]
+  );
+
+  const relationTextGetter = useCallback(
+    (rowId: string, fieldId: string) => {
+      if (!fields || !database) return '';
+      const field = fields.get(fieldId);
+
+      if (!field || Number(field.get(YjsDatabaseKey.type)) !== FieldType.Relation) return '';
+      const rowDoc = rowDocsForConditions[rowId];
+      const rowSharedRoot = rowDoc?.getMap(YjsEditorKey.data_section);
+      const row = rowSharedRoot?.get(YjsEditorKey.database_row) as YDatabaseRow | undefined;
+
+      if (!row) return '';
+      return readRelationCellText({
+        baseDoc: databaseDoc,
+        database,
+        relationField: field,
+        row,
+        rowId,
+        fieldId,
+        loadView,
+        createRowDoc,
+        getViewIdFromDatabaseId,
+      });
+    },
+    [rowDocsForConditions, fields, database, databaseDoc, loadView, createRowDoc, getViewIdFromDatabaseId]
+  );
+
+  const rollupValueGetter = useCallback(
+    (rowId: string, fieldId: string) => {
+      if (!fields || !database) return { value: '' };
+      const field = fields.get(fieldId);
+
+      if (!field || Number(field.get(YjsDatabaseKey.type)) !== FieldType.Rollup) return { value: '' };
+      const rowDoc = rowDocsForConditions[rowId];
+      const rowSharedRoot = rowDoc?.getMap(YjsEditorKey.data_section);
+      const row = rowSharedRoot?.get(YjsEditorKey.database_row) as YDatabaseRow | undefined;
+
+      if (!row) return { value: '' };
+      return readRollupCellSync({
+        baseDoc: databaseDoc,
+        database,
+        rollupField: field,
+        row,
+        rowId,
+        fieldId,
+        loadView,
+        createRowDoc,
+        getViewIdFromDatabaseId,
+      });
+    },
+    [rowDocsForConditions, fields, database, databaseDoc, loadView, createRowDoc, getViewIdFromDatabaseId]
+  );
+
+  const rollupTextGetter = useCallback(
+    (rowId: string, fieldId: string) => {
+      return rollupValueGetter(rowId, fieldId).value;
+    },
+    [rollupValueGetter]
+  );
+
   const onConditionsChange = useCallback(() => {
     const originalRowOrders = view?.get(YjsDatabaseKey.row_orders).toJSON();
 
-    if (!originalRowOrders || !rows) return;
+    if (!originalRowOrders) return;
 
-    if (sorts?.length === 0 && filters?.length === 0) {
+    const hasConditions = (sorts?.length ?? 0) > 0 || (filters?.length ?? 0) > 0;
+    const rowDocCount = Object.keys(rowDocsForConditions).length;
+    const isRowDataComplete = rowDocCount >= originalRowOrders.length;
+
+    if (!hasConditions) {
+      setRowOrders(originalRowOrders);
+      return;
+    }
+
+    if (!isRowDataComplete) {
       setRowOrders(originalRowOrders);
       return;
     }
@@ -450,11 +858,17 @@ export function useRowOrdersSelector () {
     let rowOrders: Row[] | undefined;
 
     if (sorts?.length) {
-      rowOrders = sortBy(originalRowOrders, sorts, fields, rows);
+      rowOrders = sortBy(originalRowOrders, sorts, fields, rowDocsForConditions, {
+        getRelationCellText: relationTextGetter,
+        getRollupCellValue: rollupValueGetter,
+      });
     }
 
     if (filters?.length) {
-      rowOrders = filterBy(rowOrders ?? originalRowOrders, filters, fields, rows);
+      rowOrders = filterBy(rowOrders ?? originalRowOrders, filters, fields, rowDocsForConditions, {
+        getRelationCellText: relationTextGetter,
+        getRollupCellText: rollupTextGetter,
+      });
     }
 
     if (rowOrders) {
@@ -462,66 +876,618 @@ export function useRowOrdersSelector () {
     } else {
       setRowOrders(originalRowOrders);
     }
-  }, [fields, filters, rows, sorts, view]);
+  }, [
+    fields,
+    filters,
+    rowDocsForConditions,
+    sorts,
+    view,
+    relationTextGetter,
+    rollupValueGetter,
+    rollupTextGetter,
+  ]);
 
   useEffect(() => {
     onConditionsChange();
   }, [onConditionsChange]);
 
   useEffect(() => {
+    const handleCacheChange = debounce(onConditionsChange, 200);
+    const unsubscribeRelation = subscribeRelationCache(() => handleCacheChange());
+    const unsubscribeRollup = subscribeRollupCache(() => handleCacheChange());
+
+    return () => {
+      handleCacheChange.cancel();
+      unsubscribeRelation();
+      unsubscribeRollup();
+    };
+  }, [onConditionsChange]);
+
+  useEffect(() => {
     const throttleChange = debounce(onConditionsChange, 200);
+    const scheduleRollupRefresh = debounce(() => {
+      setRollupWatchVersion((prev) => prev + 1);
+    }, 200);
 
     view?.get(YjsDatabaseKey.row_orders)?.observeDeep(throttleChange);
-    sorts?.observeDeep(throttleChange);
-    filters?.observeDeep(throttleChange);
-    fields?.observeDeep(throttleChange);
+    const debouncedConditionsChange = debounce(onConditionsChange, 150);
+
+    const observers = new Map<string, () => void>();
+
+    const handleSortFilterChange = () => {
+      scheduleRollupRefresh();
+      throttleChange();
+    };
+
+    const handleFieldChange = () => {
+      if (rows && fields) {
+        fields.forEach((field, fieldId) => {
+          if (Number(field.get(YjsDatabaseKey.type)) === FieldType.Rollup) {
+            Object.keys(rows).forEach((rowId) => {
+              invalidateRollupCell(`${rowId}:${fieldId}`);
+            });
+          }
+        });
+      }
+
+      scheduleRollupRefresh();
+      throttleChange();
+    };
+
+    sorts?.observeDeep(handleSortFilterChange);
+    filters?.observeDeep(handleSortFilterChange);
+    fields?.observeDeep(handleFieldChange);
+
+    Object.entries(rows || {}).forEach(([rowId, rowDoc]) => {
+      const observerRowsEvent = () => {
+        fields?.forEach((field, fieldId) => {
+          if (Number(field.get(YjsDatabaseKey.type)) === FieldType.Relation) {
+            invalidateRelationCell(`${rowId}:${fieldId}`);
+          }
+
+          if (Number(field.get(YjsDatabaseKey.type)) === FieldType.Rollup) {
+            invalidateRollupCell(`${rowId}:${fieldId}`);
+          }
+        });
+        scheduleRollupRefresh();
+        debouncedConditionsChange();
+      };
+
+      observers.set(rowId, observerRowsEvent);
+      rowDoc.getMap(YjsEditorKey.data_section).observeDeep(observerRowsEvent);
+    });
 
     return () => {
       view?.get(YjsDatabaseKey.row_orders)?.unobserveDeep(throttleChange);
-      sorts?.unobserveDeep(throttleChange);
-      filters?.unobserveDeep(throttleChange);
-      fields?.unobserveDeep(throttleChange);
+      sorts?.unobserveDeep(handleSortFilterChange);
+      filters?.unobserveDeep(handleSortFilterChange);
+      fields?.unobserveDeep(handleFieldChange);
+      scheduleRollupRefresh.cancel();
+      throttleChange.cancel();
+      debouncedConditionsChange.cancel();
+      Object.entries(rows || {}).forEach(([rowId, rowDoc]) => {
+        const observer = observers.get(rowId);
+
+        if (observer) {
+          rowDoc.getMap(YjsEditorKey.data_section).unobserveDeep(observer);
+        }
+      });
     };
-  }, [onConditionsChange, view, fields, filters, sorts]);
+  }, [onConditionsChange, view, fields, filters, sorts, rows]);
+
+  useEffect(() => {
+    return () => {
+      backgroundCancelledRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if ((sorts?.length ?? 0) === 0 && (filters?.length ?? 0) === 0) return;
+
+    const rowOrdersData = view?.get(YjsDatabaseKey.row_orders)?.toJSON() as { id: string }[] | undefined;
+
+    if (!rowOrdersData) return;
+
+    rowOrdersData.forEach(({ id }) => {
+      if (!rowDocsForConditions[id]) {
+        backgroundQueueRef.current.add(id);
+      }
+    });
+
+    if (backgroundQueueRef.current.size === 0 || backgroundLoadingRef.current) return;
+
+    backgroundLoadingRef.current = true;
+    backgroundCancelledRef.current = false;
+
+    const BACKGROUND_BATCH_SIZE = 24;
+    const BACKGROUND_CONCURRENCY = 6;
+
+    const drainQueue = async () => {
+      while (backgroundQueueRef.current.size > 0 && !backgroundCancelledRef.current) {
+        const batch = Array.from(backgroundQueueRef.current).slice(0, BACKGROUND_BATCH_SIZE);
+
+        batch.forEach((rowId) => {
+          backgroundQueueRef.current.delete(rowId);
+        });
+
+        for (let i = 0; i < batch.length; i += BACKGROUND_CONCURRENCY) {
+          if (backgroundCancelledRef.current) break;
+          const slice = batch.slice(i, i + BACKGROUND_CONCURRENCY);
+
+          await Promise.all(
+            slice.map(async (rowId) => {
+              if (rowDocsForConditions[rowId]) return;
+
+              if (cachedRowDocPendingRef.current.has(rowId)) {
+                await cachedRowDocPendingRef.current.get(rowId);
+                return;
+              }
+
+              const rowKey = getRowKey(databaseDoc.guid, rowId);
+              const pending = (async () => {
+                const { doc, provider } = await openCollabDBWithProvider(rowKey);
+
+                await provider.destroy();
+                return doc;
+              })();
+
+              cachedRowDocPendingRef.current.set(rowId, pending);
+
+              try {
+                const doc = await pending;
+
+                if (backgroundCancelledRef.current) {
+                  doc.destroy();
+                  return;
+                }
+
+                if (rows?.[rowId]) {
+                  doc.destroy();
+                  return;
+                }
+
+                setCachedRowDocs((prev) => {
+                  if (prev[rowId] || rows?.[rowId]) return prev;
+                  return { ...prev, [rowId]: doc };
+                });
+              } finally {
+                cachedRowDocPendingRef.current.delete(rowId);
+              }
+            })
+          );
+        }
+
+        if (backgroundCancelledRef.current) break;
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      backgroundLoadingRef.current = false;
+    };
+
+    void drainQueue();
+  }, [databaseDoc.guid, filters, rowDocsForConditions, rows, sorts, view]);
+
+  useEffect(() => {
+    const cached = cachedRowDocsRef.current;
+    let changed = false;
+    const next: Record<string, YDoc> = {};
+
+    Object.entries(cached).forEach(([rowId, doc]) => {
+      if (rows?.[rowId]) {
+        doc.destroy();
+        changed = true;
+        return;
+      }
+
+      next[rowId] = doc;
+    });
+
+    if (changed) {
+      setCachedRowDocs(next);
+    }
+  }, [rows]);
+
+  useEffect(() => {
+    const pendingRef = cachedRowDocPendingRef.current;
+
+    return () => {
+      Object.values(cachedRowDocsRef.current).forEach((doc) => doc.destroy());
+      cachedRowDocsRef.current = {};
+      pendingRef.clear();
+    };
+  }, [databaseDoc.guid]);
+
+  useEffect(() => {
+    if (!rows || !fields || !database || !loadView || !createRowDoc || !getViewIdFromDatabaseId) return;
+
+    const rollupFieldIds = new Set<string>();
+
+    sorts?.forEach((sort) => {
+      const fieldId = sort.get(YjsDatabaseKey.field_id);
+
+      if (!fieldId) return;
+      const field = fields.get(fieldId);
+
+      if (field && Number(field.get(YjsDatabaseKey.type)) === FieldType.Rollup) {
+        rollupFieldIds.add(fieldId);
+      }
+    });
+
+    filters?.forEach((filter) => {
+      const fieldId = filter.get(YjsDatabaseKey.field_id);
+
+      if (!fieldId) return;
+      const field = fields.get(fieldId);
+
+      if (field && Number(field.get(YjsDatabaseKey.type)) === FieldType.Rollup) {
+        rollupFieldIds.add(fieldId);
+      }
+    });
+
+    if (rollupFieldIds.size === 0) return;
+
+    let cancelled = false;
+    const observers: Array<{ doc: YDoc; handler: () => void }> = [];
+    const rowDocCache = new Map<string, YDoc>();
+    const relatedDocCache = new Map<string, YDoc | null>();
+    const viewIdCache = new Map<string, string | null>();
+    const debouncedChange = debounce(onConditionsChange, 200);
+
+    const getRelatedDoc = async (databaseId: string) => {
+      if (relatedDocCache.has(databaseId)) {
+        return relatedDocCache.get(databaseId) ?? null;
+      }
+
+      const viewId = viewIdCache.has(databaseId)
+        ? viewIdCache.get(databaseId)
+        : await getViewIdFromDatabaseId(databaseId);
+
+      viewIdCache.set(databaseId, viewId ?? null);
+      if (!viewId) {
+        relatedDocCache.set(databaseId, null);
+        return null;
+      }
+
+      const doc = await loadView(viewId);
+
+      relatedDocCache.set(databaseId, doc);
+      return doc;
+    };
+
+    const getRowDoc = async (rowKey: string) => {
+      if (rowDocCache.has(rowKey)) return rowDocCache.get(rowKey);
+      const doc = await createRowDoc(rowKey);
+
+      if (doc) {
+        rowDocCache.set(rowKey, doc);
+      }
+
+      return doc;
+    };
+
+    const setup = async () => {
+      for (const rollupFieldId of rollupFieldIds) {
+        if (cancelled) return;
+        const rollupField = fields.get(rollupFieldId);
+
+        if (!rollupField) continue;
+        const rollupOption = parseRollupTypeOption(rollupField);
+
+        if (!rollupOption?.relation_field_id || !rollupOption.target_field_id) continue;
+        const relationField = fields.get(rollupOption.relation_field_id);
+
+        if (!relationField) continue;
+        const relationOption = parseRelationTypeOption(relationField);
+
+        if (!relationOption?.database_id) continue;
+
+        const relatedDoc = await getRelatedDoc(relationOption.database_id);
+
+        if (!relatedDoc) continue;
+        const docGuid = relatedDoc.guid;
+
+        for (const [rowId, rowDoc] of Object.entries(rows)) {
+          if (cancelled) return;
+          const rowSharedRoot = rowDoc.getMap(YjsEditorKey.data_section);
+          const row = rowSharedRoot?.get(YjsEditorKey.database_row) as YDatabaseRow | undefined;
+
+          if (!row) continue;
+          const relationCell = row.get(YjsDatabaseKey.cells)?.get(rollupOption.relation_field_id);
+          const relatedRowIds = getRelationRowIdsFromCell(relationCell);
+
+          if (relatedRowIds.length === 0) continue;
+
+          for (const relatedRowId of relatedRowIds) {
+            if (cancelled) return;
+            const relatedRowDoc = await getRowDoc(getRowKey(docGuid, relatedRowId));
+
+            if (!relatedRowDoc) continue;
+            const handler = () => {
+              invalidateRollupCell(`${rowId}:${rollupFieldId}`);
+              debouncedChange();
+            };
+
+            relatedRowDoc.getMap(YjsEditorKey.data_section).observeDeep(handler);
+            observers.push({ doc: relatedRowDoc, handler });
+          }
+        }
+      }
+    };
+
+    void setup();
+
+    return () => {
+      cancelled = true;
+      debouncedChange.cancel();
+      observers.forEach(({ doc, handler }) => {
+        doc.getMap(YjsEditorKey.data_section).unobserveDeep(handler);
+      });
+    };
+  }, [
+    rows,
+    fields,
+    database,
+    loadView,
+    createRowDoc,
+    getViewIdFromDatabaseId,
+    sorts,
+    filters,
+    onConditionsChange,
+    rollupWatchVersion,
+  ]);
 
   return rowOrders;
 }
 
-export function useRowDataSelector (rowId: string) {
-  const rowMap = useRowDocMap();
-  const [row, setRow] = useState<YDatabaseRow | null>(null);
+export function useRowDataSelector(rowId: string) {
+  const rowSharedRoot = useRow(rowId);
+  const row = rowSharedRoot?.get(YjsEditorKey.database_row);
 
-  useEffect(() => {
-    const rowDoc = rowMap?.[rowId];
-
-    if (!rowDoc || !rowDoc.share.has(YjsEditorKey.data_section)) return;
-    const rowSharedRoot = rowDoc?.getMap(YjsEditorKey.data_section);
-    const row = rowSharedRoot?.get(YjsEditorKey.database_row);
-
-    setRow(row);
-  }, [rowId, rowMap]);
   return {
     row,
   };
 }
 
-export function useCellSelector ({ rowId, fieldId }: { rowId: string; fieldId: string }) {
-  const { row } = useRowDataSelector(rowId);
-  const cell = row?.get(YjsDatabaseKey.cells)?.get(fieldId);
+function getRelationRowIdsFromCell(cell?: YDatabaseCell): string[] {
+  if (!cell) return [];
+  const data = cell.get(YjsDatabaseKey.data);
 
-  const [cellValue, setCellValue] = useState(() => (cell ? parseYDatabaseCellToCell(cell) : undefined));
+  if (!data) return [];
+  if (typeof data === 'object' && 'toJSON' in data) {
+    const ids = (data as { toJSON: () => unknown }).toJSON();
+
+    return Array.isArray(ids) ? (ids as string[]) : [];
+  }
+
+  return Array.isArray(data) ? (data as string[]) : [];
+}
+
+function useRollupCellValue({
+  row,
+  field,
+  rowId,
+  fieldId,
+  fieldClock,
+}: {
+  row?: YDatabaseRow;
+  field?: YDatabaseField;
+  rowId: string;
+  fieldId: string;
+  fieldClock: number;
+}) {
+  const database = useDatabase();
+  const { databaseDoc, loadView, createRowDoc, getViewIdFromDatabaseId } = useDatabaseContext();
+  const [value, setValue] = useState<RollupCellValue>({ value: '' });
+  const [relationRowIdsKey, setRelationRowIdsKey] = useState('');
+  const fieldType = Number(field?.get(YjsDatabaseKey.type)) as FieldType;
+  const cellId = `${rowId}:${fieldId}`;
+  const rollupOption = useMemo(() => {
+    if (!field) return undefined;
+    // Recompute when fieldClock updates even if the field reference is stable.
+    void fieldClock;
+    return parseRollupTypeOption(field);
+  }, [field, fieldClock]);
+  const rollupContext = useMemo(() => {
+    if (!database || !row || !field) return null;
+    return {
+      baseDoc: databaseDoc,
+      database,
+      rollupField: field,
+      row,
+      rowId,
+      fieldId,
+      loadView,
+      createRowDoc,
+      getViewIdFromDatabaseId,
+    };
+  }, [database, row, field, rowId, fieldId, databaseDoc, loadView, createRowDoc, getViewIdFromDatabaseId]);
 
   useEffect(() => {
-    if (!cell) return;
-    setCellValue(parseYDatabaseCellToCell(cell));
-    const observerEvent = () => setCellValue(parseYDatabaseCellToCell(cell));
+    if (!rollupContext || fieldType !== FieldType.Rollup) {
+      setValue({ value: '' });
+      return;
+    }
 
-    cell.observeDeep(observerEvent);
+    let cancelled = false;
+
+    invalidateRollupCell(cellId);
+    void readRollupCell(rollupContext).then((next) => {
+      if (!cancelled) {
+        setValue(next);
+      }
+    });
+
+    const unsubscribe = subscribeRollupCell(cellId, (next) => {
+      if (!cancelled) {
+        setValue(next);
+      }
+    });
 
     return () => {
-      cell.unobserveDeep(observerEvent);
+      cancelled = true;
+      unsubscribe();
     };
-  }, [cell]);
+  }, [rollupContext, fieldType, cellId, fieldClock]);
+
+  useEffect(() => {
+    if (!rollupContext || fieldType !== FieldType.Rollup) return;
+    const cells = row?.get(YjsDatabaseKey.cells);
+
+    if (!cells) return;
+
+    const updateRelationKey = () => {
+      if (!rollupOption?.relation_field_id) return;
+      const relationCell = cells.get(rollupOption.relation_field_id);
+      const relatedRowIds = getRelationRowIdsFromCell(relationCell);
+      const nextKey = relatedRowIds.join(',');
+
+      setRelationRowIdsKey((prev) => (prev === nextKey ? prev : nextKey));
+    };
+
+    const handleChange = () => {
+      invalidateRollupCell(cellId);
+      void readRollupCell(rollupContext);
+      updateRelationKey();
+    };
+
+    updateRelationKey();
+    cells.observeDeep(handleChange);
+    return () => {
+      cells.unobserveDeep(handleChange);
+    };
+  }, [rollupContext, fieldType, cellId, row, fieldClock, rollupOption?.relation_field_id]);
+
+  useEffect(() => {
+    if (!rollupContext || fieldType !== FieldType.Rollup) return;
+    if (!rollupOption?.relation_field_id || !rollupOption.target_field_id) return;
+    if (!database || !row) return;
+
+    const relationField = database.get(YjsDatabaseKey.fields)?.get(rollupOption.relation_field_id);
+    const relationOption = relationField ? parseRelationTypeOption(relationField) : null;
+
+    if (!relationOption?.database_id) return;
+
+    const relationCell = row.get(YjsDatabaseKey.cells)?.get(rollupOption.relation_field_id);
+    const relatedRowIds = getRelationRowIdsFromCell(relationCell);
+
+    if (relatedRowIds.length === 0) return;
+
+    let cancelled = false;
+    const observers: Array<{ doc: YDoc; handler: () => void }> = [];
+
+    void (async () => {
+      if (!loadView || !createRowDoc) return;
+      const viewId = await getViewIdFromDatabaseId?.(relationOption.database_id);
+
+      if (!viewId) return;
+      const relatedDoc = await loadView(viewId);
+
+      if (!relatedDoc) return;
+      const docGuid = relatedDoc.guid;
+
+      for (const relatedRowId of relatedRowIds) {
+        if (cancelled) return;
+        const rowDoc = await createRowDoc(getRowKey(docGuid, relatedRowId));
+
+        if (!rowDoc) continue;
+        const handler = () => {
+          invalidateRollupCell(cellId);
+          void readRollupCell(rollupContext);
+        };
+
+        rowDoc.getMap(YjsEditorKey.data_section).observeDeep(handler);
+        observers.push({ doc: rowDoc, handler });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      observers.forEach(({ doc, handler }) => {
+        doc.getMap(YjsEditorKey.data_section).unobserveDeep(handler);
+      });
+    };
+  }, [
+    rollupContext,
+    rollupOption?.relation_field_id,
+    rollupOption?.target_field_id,
+    fieldType,
+    database,
+    row,
+    loadView,
+    createRowDoc,
+    getViewIdFromDatabaseId,
+    cellId,
+    relationRowIdsKey,
+  ]);
+
+  if (!rollupContext || fieldType !== FieldType.Rollup) return undefined;
+
+  return {
+    createdAt: 0,
+    lastModified: 0,
+    fieldType: FieldType.Rollup,
+    data: value.value,
+    rawNumeric: value.rawNumeric,
+    list: value.list,
+  } as RollupCell;
+}
+
+export function useCellSelector({ rowId, fieldId }: { rowId: string; fieldId: string }) {
+  const { row } = useRowDataSelector(rowId);
+  const cells = row?.get(YjsDatabaseKey.cells);
+  const { field, clock: fieldClock } = useFieldSelector(fieldId);
+
+  const cell = cells?.get(fieldId);
+  const [, setClock] = useState<number>(0);
+  const [cellValue, setCellValue] = useState(() => {
+    return cell ? parseYDatabaseCellToCell(cell, field) : undefined;
+  });
+  const fieldType = Number(field?.get(YjsDatabaseKey.type)) as FieldType;
+  const rollupCell = useRollupCellValue({ row, field, rowId, fieldId, fieldClock });
+
+  useEffect(() => {
+    const observerEvent = () => {
+      setClock((prev) => prev + 1);
+      setCellValue(cell ? parseYDatabaseCellToCell(cell, field) : undefined);
+    };
+
+    observerEvent();
+    cell?.observeDeep(observerEvent);
+
+    return () => {
+      cell?.unobserveDeep(observerEvent);
+    };
+  }, [cell, field]);
+
+  useEffect(() => {
+    if (!cells) return;
+
+    const observerEvent = () => {
+      const cell = cells.get(fieldId);
+
+      if (!cell) {
+        setCellValue(undefined);
+        return;
+      } else {
+        const cellValue = parseYDatabaseCellToCell(cell, field);
+
+        setCellValue(cellValue);
+      }
+    };
+
+    observerEvent();
+
+    cells.observe(observerEvent);
+
+    return () => {
+      cells.unobserve(observerEvent);
+    };
+  }, [cells, fieldId, field]);
+
+  if (fieldType === FieldType.Rollup) {
+    return rollupCell;
+  }
 
   return cellValue;
 }
@@ -530,97 +1496,168 @@ export interface CalendarEvent {
   start?: Date;
   end?: Date;
   id: string;
+  title: string;
+  allDay: boolean;
+  rowId: string;
+  isRange?: boolean;
 }
 
-export function useCalendarEventsSelector () {
+export function useCalendarEventsSelector() {
   const setting = useCalendarLayoutSetting();
-  const filedId = setting.fieldId;
+  const filedId = setting?.fieldId || '';
   const { field } = useFieldSelector(filedId);
+  const primaryFieldId = usePrimaryFieldId();
   const rowOrders = useRowOrdersSelector();
   const rows = useRowDocMap();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [emptyEvents, setEmptyEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
-    if (!field || !rowOrders || !rows) return;
+    if (!field || !rowOrders || !rows || !filedId) return;
     const fieldType = Number(field?.get(YjsDatabaseKey.type)) as FieldType;
 
-    if (fieldType !== FieldType.DateTime) return;
-    const newEvents: CalendarEvent[] = [];
-    const emptyEvents: CalendarEvent[] = [];
+    if (![FieldType.DateTime, FieldType.LastEditedTime, FieldType.CreatedTime].includes(fieldType) || !primaryFieldId) return;
 
-    rowOrders?.forEach((row) => {
-      const cell = getCell(row.id, filedId, rows);
+    const observerEvent = () => {
+      const newEvents: CalendarEvent[] = [];
+      const emptyEvents: CalendarEvent[] = [];
 
-      if (!cell) {
-        emptyEvents.push({
-          id: `${row.id}:${filedId}`,
-        });
-        return;
-      }
+      rowOrders?.forEach((row) => {
+        const cell = getCell(row.id, filedId, rows);
+        const primaryCell = getCell(row.id, primaryFieldId, rows);
+        const allDay = !cell?.get(YjsDatabaseKey.include_time);
 
-      const value = parseYDatabaseCellToCell(cell) as DateTimeCell;
+        const title = (primaryCell?.get(YjsDatabaseKey.data) as string) || '';
 
-      if (!value || !value.data) {
-        emptyEvents.push({
-          id: `${row.id}:${filedId}`,
-        });
-        return;
-      }
+        const doc = rows?.[row.id];
 
-      const getDate = (timestamp: string) => {
-        const dayjsResult = timestamp.length === 10 ? dayjs.unix(Number(timestamp)) : dayjs(timestamp);
+        if (!doc) return;
 
-        return dayjsResult.toDate();
-      };
+        const rowSharedRoot = doc.getMap(YjsEditorKey.data_section) as YSharedRoot;
+        const databbaseRow = rowSharedRoot?.get(YjsEditorKey.database_row);
 
-      newEvents.push({
-        id: `${row.id}:${filedId}`,
-        start: getDate(value.data),
-        end: value.endTimestamp && value.isRange ? getDate(value.endTimestamp) : getDate(value.data),
+        if (!databbaseRow) return;
+
+        const rowCreatedTime = databbaseRow.get(YjsDatabaseKey.created_at).toString();
+        const rowLastEditedTime = databbaseRow.get(YjsDatabaseKey.last_modified).toString();
+
+        const value = cell ? parseYDatabaseCellToCell(cell, field) as DateTimeCell : undefined;
+
+        if ((!value?.data && fieldType !== FieldType.CreatedTime && fieldType !== FieldType.LastEditedTime) ||
+          (fieldType === FieldType.CreatedTime && !rowCreatedTime) ||
+          (fieldType === FieldType.LastEditedTime && !rowLastEditedTime)
+        ) {
+          emptyEvents.push({
+            id: `${row.id}`,
+            title,
+            allDay,
+            rowId: row.id,
+          });
+          return;
+        }
+
+        const getDate = (timestamp: string) => {
+          const dayjsResult = timestamp.length === 10 ? dayjs.unix(Number(timestamp)) : dayjs(timestamp);
+
+          return dayjsResult.toDate();
+        };
+
+
+        if ([FieldType.CreatedTime, FieldType.LastEditedTime].includes(fieldType)) {
+          newEvents.push({
+            id: `${row.id}`,
+            start: fieldType === FieldType.CreatedTime ? getDate(rowCreatedTime) : getDate(rowLastEditedTime),
+            title,
+            allDay,
+            rowId: row.id,
+          });
+        } else if (value) {
+          newEvents.push({
+            id: `${row.id}`,
+            start: getDate(value.data),
+            isRange: value.isRange || false,
+            end: value.endTimestamp && value.isRange ? getDate(value.endTimestamp) : dayjs(getDate(value.data)).add(30, 'minute').toDate(),
+            title,
+            allDay,
+            rowId: row.id,
+          });
+        }
+
+
       });
+
+      setEvents(newEvents);
+      setEmptyEvents(emptyEvents);
+    }
+
+    observerEvent();
+
+    field?.observeDeep(observerEvent);
+
+    const debouncedObserverEvent = debounce(observerEvent, 150);
+
+    // for every row
+    rowOrders?.forEach((row) => {
+      const rowDoc = rows?.[row.id];
+
+      if (!rowDoc) return;
+      rowDoc.getMap(YjsEditorKey.data_section).observeDeep(debouncedObserverEvent);
     });
 
-    setEvents(newEvents);
-    setEmptyEvents(emptyEvents);
-  }, [field, rowOrders, rows, filedId]);
+    return () => {
+      debouncedObserverEvent.cancel();
+      field?.unobserveDeep(observerEvent);
+      rowOrders?.forEach((row) => {
+        const rowDoc = rows?.[row.id];
+
+        if (!rowDoc) return;
+        rowDoc.getMap(YjsEditorKey.data_section).unobserveDeep(debouncedObserverEvent);
+      });
+    };
+
+  }, [field, rowOrders, rows, filedId, primaryFieldId]);
 
   return { events, emptyEvents };
 }
 
-export function useCalendarLayoutSetting () {
-  const view = useDatabaseView();
-  const layoutSetting = view?.get(YjsDatabaseKey.layout_settings)?.get('2');
-  const [setting, setSetting] = useState<CalendarLayoutSetting>({
-    fieldId: '',
-    firstDayOfWeek: 0,
-    showWeekNumbers: true,
-    showWeekends: true,
-    layout: 0,
-  });
+export function useCalendarLayoutSetting() {
+  const currentUser = useCurrentUser();
+  const startWeekOn = Number(currentUser?.metadata?.[MetadataKey.StartWeekOn] || 0);
+
+  const timeFormat = currentUser?.metadata?.[MetadataKey.TimeFormat] || TimeFormat.TwelveHour;
+  const database = useDatabase();
+
+  const [setting, setSetting] = useState<CalendarLayoutSetting | null>(null);
+  const viewId = useDatabaseViewId();
 
   useEffect(() => {
+    const view = database.get(YjsDatabaseKey.views)?.get(viewId);
     const observerHandler = () => {
+      const layoutSetting = view?.get(YjsDatabaseKey.layout_settings)?.get('2');
+      const firstDayOfWeek = layoutSetting?.get(YjsDatabaseKey.first_day_of_week) === undefined ? startWeekOn : Number(layoutSetting?.get(YjsDatabaseKey.first_day_of_week) || 0);
+
       setSetting({
-        fieldId: layoutSetting?.get(YjsDatabaseKey.field_id) as string,
-        firstDayOfWeek: Number(layoutSetting?.get(YjsDatabaseKey.first_day_of_week)),
+        fieldId: layoutSetting?.get(YjsDatabaseKey.field_id),
+        firstDayOfWeek,
         showWeekNumbers: Boolean(layoutSetting?.get(YjsDatabaseKey.show_week_numbers)),
         showWeekends: Boolean(layoutSetting?.get(YjsDatabaseKey.show_weekends)),
         layout: Number(layoutSetting?.get(YjsDatabaseKey.layout_ty)),
+        numberOfDays: layoutSetting?.get(YjsDatabaseKey.number_of_days) || 7,
+        use24Hour: timeFormat === TimeFormat.TwentyFourHour,
       });
     };
 
     observerHandler();
-    layoutSetting?.observe(observerHandler);
+    view?.observeDeep(observerHandler);
     return () => {
-      layoutSetting?.unobserve(observerHandler);
+      view?.unobserveDeep(observerHandler);
     };
-  }, [layoutSetting]);
+  }, [startWeekOn, timeFormat, database, viewId]);
 
   return setting;
 }
 
-export function getPrimaryFieldId (database: YDatabase) {
+export function getPrimaryFieldId(database: YDatabase) {
   const fields = database?.get(YjsDatabaseKey.fields);
 
   return Array.from(fields?.keys() || []).find((fieldId) => {
@@ -628,7 +1665,7 @@ export function getPrimaryFieldId (database: YDatabase) {
   });
 }
 
-export function usePrimaryFieldId () {
+export function usePrimaryFieldId() {
   const database = useDatabase();
   const [primaryFieldId, setPrimaryFieldId] = useState<string | null>(null);
 
@@ -639,42 +1676,11 @@ export function usePrimaryFieldId () {
   return primaryFieldId;
 }
 
-export interface RowMeta {
-  documentId: string;
-  cover: {
-    data: string,
-    cover_type: RowCoverType,
-  } | null;
-  icon: string;
-  isEmptyDocument: boolean;
-}
-
-const metaIdMapFromRowIdMap = new Map<string, Map<RowMetaKey, string>>();
-
-function getMetaIdMap (rowId: string) {
-  const hasMetaIdMap = metaIdMapFromRowIdMap.has(rowId);
-
-  if (!hasMetaIdMap) {
-    const parser = metaIdFromRowId(rowId);
-    const map = new Map<RowMetaKey, string>();
-
-    map.set(RowMetaKey.IconId, parser(RowMetaKey.IconId));
-    map.set(RowMetaKey.CoverId, parser(RowMetaKey.CoverId));
-    map.set(RowMetaKey.DocumentId, parser(RowMetaKey.DocumentId));
-    map.set(RowMetaKey.IsDocumentEmpty, parser(RowMetaKey.IsDocumentEmpty));
-    metaIdMapFromRowIdMap.set(rowId, map);
-    return map;
-  }
-
-  return metaIdMapFromRowIdMap.get(rowId) as Map<RowMetaKey, string>;
-}
-
 export const useRowMetaSelector = (rowId: string) => {
   const [meta, setMeta] = useState<RowMeta | null>();
   const rowMap = useRowDocMap();
 
   const updateMeta = useCallback(() => {
-
     const row = rowMap?.[rowId];
 
     if (!row || !row.share.has(YjsEditorKey.data_section)) return;
@@ -685,31 +1691,9 @@ export const useRowMetaSelector = (rowId: string) => {
 
     if (!yMeta) return;
 
-    const metaKeyMap = getMetaIdMap(rowId);
+    const meta = getMetaJSON(rowId, yMeta);
 
-    const iconKey = metaKeyMap.get(RowMetaKey.IconId) ?? '';
-    const coverKey = metaKeyMap.get(RowMetaKey.CoverId) ?? '';
-    const documentId = metaKeyMap.get(RowMetaKey.DocumentId) ?? '';
-    const isEmptyDocumentKey = metaKeyMap.get(RowMetaKey.IsDocumentEmpty) ?? '';
-    const metaJson = yMeta.toJSON();
-
-    const icon = metaJson[iconKey];
-    let cover = null;
-
-    try {
-      cover = metaJson[coverKey] ? JSON.parse(metaJson[coverKey]) : null;
-    } catch (e) {
-      // do nothing
-    }
-
-    const isEmptyDocument = metaJson[isEmptyDocumentKey];
-
-    setMeta({
-      icon,
-      cover,
-      documentId,
-      isEmptyDocument,
-    });
+    setMeta(meta);
   }, [rowId, rowMap]);
 
   useEffect(() => {
@@ -731,3 +1715,283 @@ export const useRowMetaSelector = (rowId: string) => {
 
   return meta;
 };
+
+export const useFieldCellsSelector = (fieldId: string) => {
+  const rows = useRowOrdersSelector();
+  const [cells, setCells] = useState<Map<string, unknown> | null>(null);
+  const rowMap = useRowDocMap();
+  const cellObserverEventsRef = useRef<(() => void)[]>([]);
+
+  useEffect(() => {
+    if (!rows || !rowMap) return;
+
+    setCells(null);
+
+    rows.forEach((row) => {
+      const rowDoc = rowMap?.[row.id];
+      const rowSharedRoot = rowDoc?.getMap(YjsEditorKey.data_section);
+
+      const databaseRow = rowSharedRoot?.get(YjsEditorKey.database_row) as YDatabaseRow;
+
+      if (!databaseRow) return;
+
+      const cells = databaseRow.get(YjsDatabaseKey.cells);
+
+      const observerEvent = () => {
+        const cell = databaseRow.get(YjsDatabaseKey.cells)?.get(fieldId);
+
+        if (!cell) {
+          setCells((prev) => {
+            const newMap = new Map(prev);
+
+            newMap.set(row.id, '');
+
+            return newMap;
+          });
+          return;
+        }
+
+        const cellData = cell.get(YjsDatabaseKey.data);
+
+        setCells((prev) => {
+          const newMap = new Map(prev);
+
+          newMap.set(row.id, cellData);
+
+          return newMap;
+        });
+      };
+
+      observerEvent();
+      cells?.observeDeep(observerEvent);
+
+      cellObserverEventsRef.current.push(() => {
+        cells?.unobserveDeep(observerEvent);
+      });
+    });
+
+    return () => {
+      cellObserverEventsRef.current.forEach((unobserverEvent) => {
+        unobserverEvent();
+      });
+      cellObserverEventsRef.current = [];
+    };
+  }, [rows, rowMap, fieldId]);
+
+  return {
+    cells,
+  };
+};
+
+export const usePropertiesSelector = (isFilterHidden?: boolean) => {
+  const database = useDatabase();
+  const view = useDatabaseView();
+
+  const fieldSettings = view?.get(YjsDatabaseKey.field_settings);
+  const fieldOrders = view?.get(YjsDatabaseKey.field_orders);
+  const fields = database?.get(YjsDatabaseKey.fields);
+  const [hiddenProperties, setHiddenProperties] = useState<
+    {
+      id: string;
+      visible: boolean;
+      name: string;
+      type: FieldType;
+    }[]
+  >([]);
+  const [properties, setProperties] = useState<{ id: string; visible: boolean; name: string; type: FieldType }[]>([]);
+
+  useEffect(() => {
+    if (!fieldOrders) return;
+
+    const observeEvent = () => {
+      const newProperties: {
+        id: string;
+        visible: boolean;
+        name: string;
+        type: FieldType;
+      }[] = [];
+      const hiddenProperties: {
+        id: string;
+        visible: boolean;
+        name: string;
+        type: FieldType;
+      }[] = [];
+
+      fieldOrders.toArray().forEach((item) => {
+        const fieldSetting = fieldSettings?.get(item.id);
+        const visible = fieldSetting
+          ? Number(fieldSetting.get(YjsDatabaseKey.visibility)) !== FieldVisibility.AlwaysHidden
+          : true;
+        const field = fields?.get(item.id);
+
+        if (!visible) {
+          hiddenProperties.push({
+            id: item.id,
+            name: field?.get(YjsDatabaseKey.name) || '',
+            visible,
+            type: Number(field?.get(YjsDatabaseKey.type)) as FieldType,
+          });
+        }
+
+        if (isFilterHidden && !visible) {
+          return;
+        } else {
+          newProperties.push({
+            id: item.id,
+            name: field?.get(YjsDatabaseKey.name) || '',
+            visible,
+            type: Number(field?.get(YjsDatabaseKey.type)) as FieldType,
+          });
+        }
+      });
+
+      setProperties(newProperties);
+      setHiddenProperties(hiddenProperties);
+    };
+
+    observeEvent();
+
+    fields.observeDeep(observeEvent);
+    fieldOrders.observeDeep(observeEvent);
+    fieldSettings?.observeDeep(observeEvent);
+
+    return () => {
+      fields.unobserveDeep(observeEvent);
+      fieldOrders.unobserveDeep(observeEvent);
+      fieldSettings?.unobserveDeep(observeEvent);
+    };
+  }, [fieldOrders, fieldSettings, fields, isFilterHidden]);
+
+  return {
+    properties,
+    hiddenProperties,
+  };
+};
+
+export const useDateTimeCellString = (cell: DateTimeCell | undefined, fieldId: string) => {
+  const currentUser = useCurrentUser();
+  const { field, clock } = useFieldSelector(fieldId);
+
+  return useMemo(() => {
+    if (!cell) return null;
+    return getDateCellStr({ cell, field, currentUser });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cell, field, clock, currentUser]);
+};
+
+export const useRowTimeString = (rowId: string, fieldId: string, attrName: string) => {
+  const currentUser = useCurrentUser();
+  const { field, clock } = useFieldSelector(fieldId);
+
+  const typeOptionValue = useMemo(() => {
+    const typeOption = getTypeOptions(field);
+
+    const { dateFormat, timeFormat } = getFieldDateTimeFormats(typeOption, currentUser);
+    const includeTimeRaw = typeOption?.get(YjsDatabaseKey.include_time);
+
+    return {
+      dateFormat,
+      timeFormat,
+      includeTime: typeof includeTimeRaw === 'boolean' ? includeTimeRaw : Boolean(includeTimeRaw),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field, clock, currentUser?.metadata]);
+
+  const getDateTimeStr = useCallback(
+    (timeStamp: string, includeTime?: boolean) => {
+      if (!typeOptionValue || !timeStamp) return null;
+      const timeFormat = getTimeFormat(typeOptionValue.timeFormat);
+      const dateFormat = getDateFormat(typeOptionValue.dateFormat);
+      const format = [dateFormat];
+
+      if (includeTime || typeOptionValue.includeTime) {
+        format.push(timeFormat);
+      }
+
+      return renderDate(timeStamp, format.join(' '), true);
+    },
+    [typeOptionValue]
+  );
+
+  const { row: rowData } = useRowDataSelector(rowId);
+  const [value, setValue] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!rowData) return;
+    const observeHandler = () => {
+      setValue(rowData.get(attrName));
+    };
+
+    observeHandler();
+
+    rowData.observe(observeHandler);
+    return () => {
+      rowData.unobserve(observeHandler);
+    };
+  }, [rowData, attrName]);
+
+  const time = useMemo(() => {
+    if (!value) return null;
+    return getDateTimeStr(value);
+  }, [value, getDateTimeStr]);
+
+  return time;
+};
+
+export const useSelectFieldOptions = (fieldId: string, searchValue?: string) => {
+  const { field, clock } = useFieldSelector(fieldId);
+
+  return useMemo(() => {
+    const typeOption = field ? parseSelectOptionTypeOptions(field) : null;
+
+    if (!typeOption) return [] as SelectOption[];
+
+    const normalizedOptions = typeOption.options.filter((option) => {
+      return Boolean(option && option.id);
+    });
+
+    return normalizedOptions.filter((option) => {
+      const optionName = typeof option.name === 'string' ? option.name : '';
+
+      if (!searchValue) return true;
+      return optionName.toLowerCase().includes(searchValue.toLowerCase());
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field, searchValue, clock]);
+};
+
+export function useRowPrimaryContentSelector(rowDoc: YDoc | null, primaryFieldId: string) {
+  const [primaryContent, setPrimaryContent] = useState<string | null>(null);
+  const { field } = useFieldSelector(primaryFieldId);
+
+  const rowSharedRoot = rowDoc?.getMap(YjsEditorKey.data_section);
+  const row = rowSharedRoot?.get(YjsEditorKey.database_row) as YDatabaseRow;
+
+  useEffect(() => {
+    const observerEvent = () => {
+      if (!row) return;
+
+      const cell = row.get(YjsDatabaseKey.cells)?.get(primaryFieldId);
+
+      if (!cell) return;
+
+      const cellValue = parseYDatabaseCellToCell(cell, field);
+
+      if (cellValue) {
+        setPrimaryContent(cellValue.data as string);
+      } else {
+        setPrimaryContent(null);
+      }
+    };
+
+    observerEvent();
+
+    row?.observeDeep(observerEvent);
+
+    return () => {
+      row?.unobserveDeep(observerEvent);
+    };
+  }, [primaryFieldId, row, rowDoc, field]);
+
+  return primaryContent;
+}

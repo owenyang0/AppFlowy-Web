@@ -1,11 +1,17 @@
-import { NormalModal } from '@/components/_shared/modal';
-import { notify } from '@/components/_shared/notify';
-import { filterViewsByCondition } from '@/components/_shared/outline/utils';
-import { useAppHandlers, useAppView } from '@/components/app/app.hooks';
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
-function DeletePageConfirm({ open, onClose, viewId, onDeleted }: {
+import { NormalModal } from '@/components/_shared/modal';
+import { filterViewsByCondition } from '@/components/_shared/outline/utils';
+import { useAppHandlers, useAppView } from '@/components/app/app.hooks';
+
+function DeletePageConfirm({
+  open,
+  onClose,
+  viewId,
+  onDeleted,
+}: {
   open: boolean;
   onClose: () => void;
   viewId: string;
@@ -13,9 +19,7 @@ function DeletePageConfirm({ open, onClose, viewId, onDeleted }: {
 }) {
   const view = useAppView(viewId);
   const [loading, setLoading] = React.useState(false);
-  const {
-    deletePage,
-  } = useAppHandlers();
+  const { deletePage } = useAppHandlers();
   const { t } = useTranslation();
 
   const handleOk = useCallback(async () => {
@@ -27,14 +31,14 @@ function DeletePageConfirm({ open, onClose, viewId, onDeleted }: {
       onDeleted?.();
       // eslint-disable-next-line
     } catch (e: any) {
-      notify.error(e.message);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
   }, [deletePage, onClose, onDeleted, view, viewId]);
 
   const hasPublished = useMemo(() => {
-    const publishedView = filterViewsByCondition(view?.children || [], v => v.is_published);
+    const publishedView = filterViewsByCondition(view?.children || [], (v) => v.is_published);
 
     return view?.is_published || !!publishedView.length;
   }, [view]);
@@ -49,6 +53,7 @@ function DeletePageConfirm({ open, onClose, viewId, onDeleted }: {
 
   return (
     <NormalModal
+      data-testid="delete-page-confirm-modal"
       okLoading={loading}
       keepMounted={false}
       disableRestoreFocus={true}
@@ -58,20 +63,16 @@ function DeletePageConfirm({ open, onClose, viewId, onDeleted }: {
       danger={true}
       onClose={onClose}
       title={
-        <div
-          className={'flex font-semibold items-center w-full text-left'}>
-          <span
-            className={'truncate w-full'}>{`${t('button.delete')}: ${view?.name}`}</span>
+        <div className={'flex w-full items-center text-left font-semibold'}>
+          <span className={'w-full truncate'}>{`${t('button.delete')}: ${view?.name}`}</span>
         </div>
       }
-
       onOk={handleOk}
       PaperProps={{
         className: 'w-[420px] max-w-[70vw]',
       }}
     >
-      <div className={'text-text-caption font-normal'}>{t('publish.containsPublishedPage')}</div>
-
+      <div className={'font-normal text-text-secondary'}>{t('publish.containsPublishedPage')}</div>
     </NormalModal>
   );
 }

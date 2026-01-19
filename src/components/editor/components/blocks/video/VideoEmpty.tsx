@@ -1,10 +1,10 @@
-import { YjsEditor } from '@/application/slate-yjs';
-import { VideoBlockNode } from '@/components/editor/editor.type';
-import React from 'react';
-import { ReactComponent as ImageIcon } from '@/assets/icons/video.svg';
 import { useTranslation } from 'react-i18next';
 import { Element } from 'slate';
 import { useReadOnly, useSlateStatic } from 'slate-react';
+
+import { YjsEditor } from '@/application/slate-yjs';
+import { ReactComponent as ImageIcon } from '@/assets/icons/video.svg';
+import { VideoBlockNode } from '@/components/editor/editor.type';
 
 function VideoEmpty({ node, error }: { node: VideoBlockNode; error?: string }) {
   const { t } = useTranslation();
@@ -15,11 +15,11 @@ function VideoEmpty({ node, error }: { node: VideoBlockNode; error?: string }) {
   return (
     <>
       <div
-        className={
-          `flex w-full select-none items-center gap-4 ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${error ? 'text-function-error' : 'text-text-caption'}`
-        }
+        className={`flex w-full select-none items-center gap-4 ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${
+          error ? 'text-function-error' : 'text-text-secondary'
+        }`}
       >
-        <ImageIcon className={'w-6 h-6'} />
+        <ImageIcon className={'h-6 w-6'} />
         {error || t('embedAVideo')}
       </div>
     </>

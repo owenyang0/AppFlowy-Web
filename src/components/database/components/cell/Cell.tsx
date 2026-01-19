@@ -1,30 +1,44 @@
-import { YjsDatabaseKey } from '@/application/types';
+import { FC, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { CellProps, Cell as CellType } from '@/application/database-yjs/cell.type';
 import { FieldType } from '@/application/database-yjs/database.type';
 import { useFieldSelector } from '@/application/database-yjs/selector';
-import { RowCreateModifiedTime } from '@/components/database/components/cell/created-modified';
-import React, { FC, useMemo } from 'react';
-import { TextCell } from '@/components/database/components/cell/text';
-import { UrlCell } from '@/components/database/components/cell/url';
-import { NumberCell } from '@/components/database/components/cell/number';
+import { YjsDatabaseKey } from '@/application/types';
+import { AITextCell } from '@/components/database/components/cell/ai-text/AITextCell';
 import { CheckboxCell } from '@/components/database/components/cell/checkbox';
-import { SelectOptionCell } from '@/components/database/components/cell/select-option';
-import { DateTimeCell } from '@/components/database/components/cell/date';
 import { ChecklistCell } from '@/components/database/components/cell/checklist';
-import { CellProps, Cell as CellType } from '@/application/database-yjs/cell.type';
+import { RowCreateModifiedTime } from '@/components/database/components/cell/created-modified';
+import { DateTimeCell } from '@/components/database/components/cell/date';
+import { NumberCell } from '@/components/database/components/cell/number';
 import { RelationCell } from '@/components/database/components/cell/relation';
+import { RollupCell } from '@/components/database/components/cell/rollup';
+import { SelectOptionCell } from '@/components/database/components/cell/select-option';
+import { TextCell } from '@/components/database/components/cell/text';
+import { isFieldEditingDisabled } from '@/components/database/utils/field-editing';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { FileMediaCell } from 'src/components/database/components/cell/file-media';
 
-export function Cell (props: CellProps<CellType>) {
-  const { cell, rowId, fieldId, style } = props;
+import { PersonCell } from './person';
+
+export function Cell(props: CellProps<CellType>) {
+  const { rowId, fieldId, style, wrap, isHovering } = props;
+  const { t } = useTranslation();
   const { field } = useFieldSelector(fieldId);
   const fieldType = Number(field?.get(YjsDatabaseKey.type)) as FieldType;
+  const fieldName = field?.get(YjsDatabaseKey.name);
+  const fallbackFieldName =
+    fieldType === FieldType.Relation
+      ? t('grid.field.relationFieldName')
+      : t('grid.field.rollupFieldName', { defaultValue: 'Rollup' });
+  const disableRelationRollupEdit = isFieldEditingDisabled(fieldType);
 
   const Component = useMemo(() => {
     switch (fieldType) {
       case FieldType.RichText:
-        return TextCell;
       case FieldType.URL:
-        return UrlCell;
+        return TextCell;
       case FieldType.Number:
         return NumberCell;
       case FieldType.Checkbox:
@@ -40,6 +54,13 @@ export function Cell (props: CellProps<CellType>) {
         return RelationCell;
       case FieldType.FileMedia:
         return FileMediaCell;
+      case FieldType.AISummaries:
+      case FieldType.AITranslations:
+        return AITextCell;
+      case FieldType.Person:
+        return PersonCell;
+      case FieldType.Rollup:
+        return RollupCell;
       default:
         return TextCell;
     }
@@ -48,14 +69,51 @@ export function Cell (props: CellProps<CellType>) {
   if (fieldType === FieldType.CreatedTime || fieldType === FieldType.LastEditedTime) {
     const attrName = fieldType === FieldType.CreatedTime ? YjsDatabaseKey.created_at : YjsDatabaseKey.last_modified;
 
-    return <RowCreateModifiedTime style={style} rowId={rowId} fieldId={fieldId} attrName={attrName} />;
+    return (
+      <RowCreateModifiedTime
+        style={style}
+        rowId={rowId}
+        fieldId={fieldId}
+        attrName={attrName}
+        wrap={wrap}
+        isHovering={isHovering}
+      />
+    );
   }
 
-  if (cell && cell.fieldType !== fieldType) {
-    return null;
+  const cellProps = disableRelationRollupEdit
+    ? {
+      ...props,
+      readOnly: true,
+      editing: false,
+      setEditing: undefined,
+    }
+    : props;
+
+  const content = <Component {...cellProps} />;
+
+  if (disableRelationRollupEdit) {
+    const tooltipContent =
+      fieldType === FieldType.Relation || fieldType === FieldType.Rollup
+        ? t('tooltip.fieldEditingUnavailable', {
+          field:
+            typeof fieldName === 'string' && fieldName.trim()
+              ? fieldName.trim()
+              : fallbackFieldName,
+        })
+        : '';
+
+    return (
+      <Tooltip delayDuration={500} disableHoverableContent>
+        <TooltipTrigger asChild>
+          <div className="w-full min-h-[20px] h-full flex-1 self-stretch">{content}</div>
+        </TooltipTrigger>
+        <TooltipContent side="top">{tooltipContent}</TooltipContent>
+      </Tooltip>
+    );
   }
 
-  return <Component {...props} />;
+  return content;
 }
 
 export default Cell;

@@ -1,4 +1,4 @@
-import { FieldId } from '@/application/types';
+import { FieldId, RowCoverType } from '@/application/types';
 
 export enum FieldVisibility {
   AlwaysShown = 0,
@@ -20,7 +20,10 @@ export enum FieldType {
   Relation = 10,
   AISummaries = 11,
   AITranslations = 12,
-  FileMedia = 14
+  Time = 13,
+  FileMedia = 14,
+  Person = 15,
+  Rollup = 16,
 }
 
 export enum CalculationType {
@@ -32,6 +35,25 @@ export enum CalculationType {
   Count = 5,
   CountEmpty = 6,
   CountNonEmpty = 7,
+  DateEarliest = 8,
+  DateLatest = 9,
+  DateRange = 10,
+  NumberRange = 11,
+  NumberMode = 12,
+  CountChecked = 13,
+  CountUnchecked = 14,
+  PercentEmpty = 15,
+  PercentNotEmpty = 16,
+  CountUnique = 17,
+  CountValue = 18,
+  PercentChecked = 19,
+  PercentUnchecked = 20,
+}
+
+export enum RollupDisplayMode {
+  Calculated = 0,
+  OriginalList = 1,
+  UniqueList = 2,
 }
 
 export enum SortCondition {
@@ -40,9 +62,9 @@ export enum SortCondition {
 }
 
 export enum FilterType {
-  Data = 0,
-  And = 1,
-  Or = 2,
+  And = 0,
+  Or = 1,
+  Data = 2,
 }
 
 export interface Filter {
@@ -65,6 +87,8 @@ export interface CalendarLayoutSetting {
   showWeekNumbers: boolean;
   showWeekends: boolean;
   layout: CalendarLayout;
+  numberOfDays: number;
+  use24Hour: boolean;
 }
 
 export enum RowMetaKey {
@@ -72,4 +96,35 @@ export enum RowMetaKey {
   IconId = 'icon_id',
   CoverId = 'cover_id',
   IsDocumentEmpty = 'is_document_empty',
+}
+
+export interface RowMeta {
+  documentId: string;
+  cover: {
+    data: string,
+    cover_type: RowCoverType,
+    offset?: number,
+  } | null;
+  icon: string;
+  isEmptyDocument: boolean;
+}
+
+export enum AITranslateLanguage {
+  Traditional_Chinese,
+  English,
+  French,
+  German,
+  Hindi,
+  Spanish,
+  Portuguese,
+  Standard_Arabic,
+  Simplified_Chinese
+}
+
+export enum DateGroupCondition {
+  Relative = 0,
+  Day = 1,
+  Week = 2,
+  Month = 3,
+  Year = 4
 }

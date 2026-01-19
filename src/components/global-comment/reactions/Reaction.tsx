@@ -1,12 +1,13 @@
-import { Reaction as ReactionType } from '@/application/comment.type';
-import { AFConfigContext } from '@/components/main/app.hooks';
-import { isFlagEmoji } from '@/utils/emoji';
-import { getPlatform } from '@/utils/platform';
 import { Tooltip } from '@mui/material';
 import React, { memo, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-function Reaction ({ reaction, onClick }: { reaction: ReactionType; onClick: (reaction: ReactionType) => void }) {
+import { Reaction as ReactionType } from '@/application/comment.type';
+import { AFConfigContext } from '@/components/main/app.hooks';
+import { isFlagEmoji } from '@/utils/emoji';
+import { getPlatform } from '@/utils/platform';
+
+function Reaction({ reaction, onClick }: { reaction: ReactionType; onClick: (reaction: ReactionType) => void }) {
   const { t } = useTranslation();
   const isAuthenticated = useContext(AFConfigContext)?.isAuthenticated;
   const openLoginModal = useContext(AFConfigContext)?.openLoginModal;
@@ -93,7 +94,7 @@ function Reaction ({ reaction, onClick }: { reaction: ReactionType; onClick: (re
         }}
         onMouseLeave={() => setHover(false)}
         className={
-          'flex cursor-pointer items-center gap-1 rounded-full border border-transparent bg-fill-list-hover px-1 py-0.5 text-sm'
+          'flex cursor-pointer items-center gap-1 rounded-full border border-transparent bg-fill-content-hover px-1 py-0.5 text-sm'
         }
       >
         <span className={`${isFlag ? 'icon' : ''}`}>{reaction.reactionType}</span>

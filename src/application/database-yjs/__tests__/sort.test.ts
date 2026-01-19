@@ -1,397 +1,786 @@
-import { Row } from '@/application/database-yjs';
-import { withTestingData } from '@/application/database-yjs/__tests__/withTestingData';
-import { withTestingRows } from '@/application/database-yjs/__tests__/withTestingRows';
-import {
-  withCheckboxSort,
-  withChecklistSort,
-  withCreatedAtSort,
-  withDateTimeSort,
-  withLastModifiedSort,
-  withMultiSelectOptionSort,
-  withNumberSort,
-  withRichTextSort,
-  withSingleSelectOptionSort,
-  withUrlSort,
-} from '@/application/database-yjs/__tests__/withTestingSorts';
-import {
-  withCheckboxTestingField,
-  withDateTimeTestingField,
-  withNumberTestingField,
-  withRichTextTestingField,
-  withSelectOptionTestingField,
-  withURLTestingField,
-  withChecklistTestingField,
-  withRelationTestingField,
-} from './withTestingField';
-import { sortBy, parseCellDataForSort } from '../sort';
 import * as Y from 'yjs';
-import { expect } from '@jest/globals';
-import { RowId, YDoc, YjsDatabaseKey, YjsEditorKey } from '@/application/types';
 
-describe('parseCellDataForSort', () => {
-  it('should parse data correctly based on field type', () => {
+jest.mock('@/utils/runtime-config', () => ({
+  getConfigValue: (_key: string, defaultValue: string) => defaultValue,
+}));
+
+import { sortBy } from '@/application/database-yjs/sort';
+import { CalculationType, FieldType, RollupDisplayMode, SortCondition } from '@/application/database-yjs/database.type';
+import { Row } from '@/application/database-yjs/selector';
+import {
+  RowId,
+  YDatabaseField,
+  YDatabaseSort,
+  YDatabaseSorts,
+  YDatabaseFields,
+  YDatabaseRow,
+  YDoc,
+  YjsDatabaseKey,
+  YjsEditorKey,
+} from '@/application/types';
+
+import {
+  createCell,
+  createField,
+  createFieldWithTypeOption,
+  createRelationRollupFixtureFromV069,
+  createRowDoc,
+  resolveRelationText,
+  resolveRollupValue,
+} from './test-helpers';
+
+function createSorts(configs: { fieldId: string; condition: SortCondition }[]): YDatabaseSorts {
+  const sorts = configs.map((config, index) => {
     const doc = new Y.Doc();
-    const field = withNumberTestingField();
-    doc.getMap().set('field', field);
-    const data = 42;
+    const sort = doc.getMap(`sort-${index}`) as YDatabaseSort;
 
-    const result = parseCellDataForSort(field, data);
+    sort.set(YjsDatabaseKey.id, `sort-${index}`);
+    sort.set(YjsDatabaseKey.field_id, config.fieldId);
+    sort.set(YjsDatabaseKey.condition, config.condition);
 
-    expect(result).toEqual(data);
+    return sort;
   });
 
-  it('should return default value for empty rich text', () => {
-    const doc = new Y.Doc();
-    const field = withRichTextTestingField();
-    doc.getMap().set('field', field);
-    const data = '';
+  return {
+    toArray: () => sorts,
+  } as YDatabaseSorts;
+}
 
-    const result = parseCellDataForSort(field, data);
+describe('text sort tests', () => {
+  const databaseId = 'db-sort-text';
+  const fieldId = 'text-field';
+  const fields = new Map() as unknown as YDatabaseFields;
 
-    expect(result).toEqual('\uFFFF');
+  fields.set(fieldId, createField(fieldId, FieldType.RichText));
+
+  it('sorts text field ascending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Banana'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Apple'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, ''),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
   });
 
-  it('should return default value for empty URL', () => {
-    const doc = new Y.Doc();
-    const field = withURLTestingField();
-    doc.getMap().set('field', field);
-    const data = '';
+  it('sorts text field descending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Banana'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Apple'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, ''),
+      }),
+    };
 
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe('\uFFFF');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
   });
 
-  it('should return data for non-empty rich text', () => {
-    const doc = new Y.Doc();
-    const field = withRichTextTestingField();
-    doc.getMap().set('field', field);
-    const data = 'Hello, world!';
+  it('sorts text field case insensitive', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'alpha'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Alpha'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'beta'),
+      }),
+    };
 
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe(data);
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-c', 'row-a', 'row-b']);
   });
 
-  it('should parse checkbox data correctly', () => {
-    const doc = new Y.Doc();
-    const field = withCheckboxTestingField();
-    doc.getMap().set('field', field);
-    const data = 'Yes';
+  it('places empty values at end for ascending', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Alpha'),
+      }),
+    };
 
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe(true);
-
-    const noData = 'No';
-    const noResult = parseCellDataForSort(field, noData);
-    expect(noResult).toBe(false);
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
   });
 
-  it('should parse DateTime data correctly', () => {
-    const doc = new Y.Doc();
-    const field = withDateTimeTestingField();
-    doc.getMap().set('field', field);
-    const data = '1633046400000';
+  it('places empty values at end for descending', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.RichText, 'Alpha'),
+      }),
+    };
 
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe(Number(data));
-  });
-
-  it('should parse SingleSelect data correctly', () => {
-    const doc = new Y.Doc();
-    const field = withSelectOptionTestingField();
-    doc.getMap().set('field', field);
-    const data = '1';
-
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe('Option 1');
-  });
-
-  it('should parse MultiSelect data correctly', () => {
-    const doc = new Y.Doc();
-    const field = withSelectOptionTestingField();
-    doc.getMap().set('field', field);
-    const data = '1,2';
-
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe('Option 1, Option 2');
-  });
-
-  it('should parse Checklist data correctly', () => {
-    const doc = new Y.Doc();
-    const field = withChecklistTestingField();
-    doc.getMap().set('field', field);
-    const data = '[]';
-
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe(0);
-  });
-
-  it('should return empty string for Relation field', () => {
-    const doc = new Y.Doc();
-    const field = withRelationTestingField();
-    doc.getMap().set('field', field);
-    const data = '';
-
-    const result = parseCellDataForSort(field, data);
-
-    expect(result).toBe('');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
   });
 });
 
-describe('Database sortBy', () => {
-  let rows: Row[];
+describe('number sort tests', () => {
+  const databaseId = 'db-sort-number';
+  const fieldId = 'number-field';
+  const fields = new Map() as unknown as YDatabaseFields;
 
-  beforeEach(() => {
-    rows = withTestingRows();
+  fields.set(fieldId, createField(fieldId, FieldType.Number));
+
+  it('sorts number field ascending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c', 'row-d'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '10'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '-5'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '1.2'),
+      }),
+      'row-d': createRowDoc('row-d', databaseId, {
+        [fieldId]: createCell(FieldType.Number, ''),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-c', 'row-a', 'row-d']);
   });
 
-  it('should not sort rows if no sort is provided', () => {
-    const { sorts, fields, rowMap } = withTestingData();
+  it('sorts number field descending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c', 'row-d'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '10'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '-5'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '1.2'),
+      }),
+      'row-d': createRowDoc('row-d', databaseId, {
+        [fieldId]: createCell(FieldType.Number, ''),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-c', 'row-b', 'row-d']);
   });
 
-  it('should not sort rows if no rows are provided', () => {
-    const { sorts, fields } = withTestingData();
-    const rowMap: Record<RowId, YDoc> = {};
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+  it('handles negative numbers', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '-1'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '1'),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b']);
   });
 
-  it('should return default data if rowMeta is not found', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withNumberSort();
-    sorts.push([sort]);
-    delete rowMap['1'];
+  it('handles decimal numbers', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '1.5'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '1.05'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
   });
 
-  it('should return default data if cell is not found', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withNumberSort();
-    sorts.push([sort]);
-    const rowDoc = rowMap['1'];
-    rowDoc
-      ?.getMap(YjsEditorKey.data_section)
-      .get(YjsEditorKey.database_row)
-      ?.get(YjsDatabaseKey.cells)
-      .delete('number_field');
+  it('places empty values at end', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Number, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Number, '2'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
+  });
+});
+
+describe('checkbox sort tests', () => {
+  const databaseId = 'db-sort-checkbox';
+  const fieldId = 'checkbox-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(fieldId, createField(fieldId, FieldType.Checkbox));
+
+  it('sorts checkbox ascending (unchecked first)', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Checkbox, 'Yes'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Checkbox, 'No'),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
   });
 
-  it('should sort by number field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withNumberSort();
-    sorts.push([sort]);
+  it('sorts checkbox descending (checked first)', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Checkbox, 'Yes'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Checkbox, 'No'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b']);
+  });
+});
+
+describe('date sort tests', () => {
+  const databaseId = 'db-sort-date';
+  const fieldId = 'date-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(fieldId, createField(fieldId, FieldType.DateTime));
+
+  it('sorts date field ascending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, '100'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, '50'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, ''),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
   });
 
-  it('should sort by number field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withNumberSort(false);
-    sorts.push([sort]);
+  it('sorts date field descending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, '100'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, '50'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, ''),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('10,9,8,7,6,5,4,3,2,1');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
   });
 
-  it('should sort by rich text field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withRichTextSort();
-    sorts.push([sort]);
+  it('handles empty date values', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.DateTime, '10'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('9,2,3,4,1,6,10,8,5,7');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
+  });
+});
+
+describe('select option sort tests', () => {
+  const databaseId = 'db-sort-select';
+  const singleFieldId = 'single-select';
+  const multiFieldId = 'multi-select';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(
+    singleFieldId,
+    createField(singleFieldId, FieldType.SingleSelect, {
+      options: [
+        { id: 'opt-a', name: 'Alpha', color: 0 },
+        { id: 'opt-b', name: 'Beta', color: 0 },
+      ],
+      disable_color: false,
+    })
+  );
+  fields.set(
+    multiFieldId,
+    createField(multiFieldId, FieldType.MultiSelect, {
+      options: [
+        { id: 'opt-a', name: 'Alpha', color: 0 },
+        { id: 'opt-b', name: 'Beta', color: 0 },
+      ],
+      disable_color: false,
+    })
+  );
+
+  it('sorts single select by option order', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [singleFieldId]: createCell(FieldType.SingleSelect, 'opt-b'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [singleFieldId]: createCell(FieldType.SingleSelect, 'opt-a'),
+      }),
+    };
+
+    const sorts = createSorts([{ fieldId: singleFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
   });
 
-  it('should sort by rich text field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withRichTextSort(false);
-    sorts.push([sort]);
+  it('sorts multi-select by first option', () => {
+    const rows: Row[] = ['row-a', 'row-b'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [multiFieldId]: createCell(FieldType.MultiSelect, 'opt-b,opt-a'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [multiFieldId]: createCell(FieldType.MultiSelect, 'opt-a'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('7,5,8,10,6,1,4,3,2,9');
+    const sorts = createSorts([{ fieldId: multiFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a']);
+  });
+});
+
+describe('checklist sort tests', () => {
+  const databaseId = 'db-sort-checklist';
+  const fieldId = 'checklist-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(fieldId, createField(fieldId, FieldType.Checklist));
+
+  const complete = JSON.stringify({
+    options: [{ id: '1', name: 'Task', color: 0 }],
+    selected_option_ids: ['1'],
+  });
+  const partial = JSON.stringify({
+    options: [
+      { id: '1', name: 'Task', color: 0 },
+      { id: '2', name: 'Other', color: 0 },
+    ],
+    selected_option_ids: ['1'],
   });
 
-  it('should sort by url field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withUrlSort();
-    sorts.push([sort]);
+  it('sorts checklist by completion percentage ascending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, partial),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, complete),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,10,2,3,4,5,6,7,8,9');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
   });
 
-  it('should sort by url field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withUrlSort(false);
-    sorts.push([sort]);
+  it('sorts checklist by completion percentage descending', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, partial),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [fieldId]: createCell(FieldType.Checklist, complete),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('9,8,7,6,5,4,3,2,10,1');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Descending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-c', 'row-b', 'row-a']);
+  });
+});
+
+describe('multi-sort tests', () => {
+  const databaseId = 'db-sort-multi';
+  const textFieldId = 'text-field';
+  const numberFieldId = 'number-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(textFieldId, createField(textFieldId, FieldType.RichText));
+  fields.set(numberFieldId, createField(numberFieldId, FieldType.Number));
+
+  it('sorts by primary field then secondary field', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, '2'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Beta'),
+        [numberFieldId]: createCell(FieldType.Number, '0'),
+      }),
+    };
+
+    const sorts = createSorts([
+      { fieldId: textFieldId, condition: SortCondition.Ascending },
+      { fieldId: numberFieldId, condition: SortCondition.Ascending },
+    ]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
   });
 
-  it('should sort by checkbox field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withCheckboxSort();
-    sorts.push([sort]);
+  it('sorts by three fields with ties', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Beta'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('2,4,6,8,10,1,3,5,7,9');
+    const sorts = createSorts([
+      { fieldId: textFieldId, condition: SortCondition.Ascending },
+      { fieldId: numberFieldId, condition: SortCondition.Ascending },
+    ]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
   });
 
-  it('should sort by checkbox field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withCheckboxSort(false);
-    sorts.push([sort]);
+  it('handles nulls in multi-sort', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, ''),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Alpha'),
+        [numberFieldId]: createCell(FieldType.Number, '2'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Beta'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,3,5,7,9,2,4,6,8,10');
+    const sorts = createSorts([
+      { fieldId: textFieldId, condition: SortCondition.Ascending },
+      { fieldId: numberFieldId, condition: SortCondition.Ascending },
+    ]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
   });
 
-  it('should sort by DateTime field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withDateTimeSort();
-    sorts.push([sort]);
+  it('multi-sort is deterministic', () => {
+    const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = {
+      'row-a': createRowDoc('row-a', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Gamma'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+      'row-b': createRowDoc('row-b', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Gamma'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+      'row-c': createRowDoc('row-c', databaseId, {
+        [textFieldId]: createCell(FieldType.RichText, 'Gamma'),
+        [numberFieldId]: createCell(FieldType.Number, '1'),
+      }),
+    };
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    const sorts = createSorts([
+      { fieldId: textFieldId, condition: SortCondition.Ascending },
+      { fieldId: numberFieldId, condition: SortCondition.Ascending },
+    ]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
+  });
+});
+
+describe('unicode sort tests', () => {
+  const databaseId = 'db-sort-unicode';
+  const fieldId = 'text-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(fieldId, createField(fieldId, FieldType.RichText));
+
+  it('sorts unicode characters correctly', () => {
+    const values: Record<RowId, string> = {
+      'row-a': 'Älpha',
+      'row-b': 'alpha',
+      'row-c': 'Éclair',
+      'row-d': '日本',
+    };
+    const rows: Row[] = Object.keys(values).map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = Object.fromEntries(
+      Object.entries(values).map(([rowId, value]) => [
+        rowId,
+        createRowDoc(rowId, databaseId, {
+          [fieldId]: createCell(FieldType.RichText, value),
+        }),
+      ])
+    );
+
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+
+    const collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true, usage: 'sort' });
+    const expected = [...rows]
+      .sort((a, b) => collator.compare(values[a.id], values[b.id]))
+      .map((row) => row.id);
+
+    expect(result).toEqual(expected);
   });
 
-  it('should sort by DateTime field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withDateTimeSort(false);
-    sorts.push([sort]);
+  it('sorts mixed ascii and unicode', () => {
+    const values: Record<RowId, string> = {
+      'row-a': 'Zebra',
+      'row-b': 'alpha',
+      'row-c': 'βeta',
+      'row-d': '😀',
+    };
+    const rows: Row[] = Object.keys(values).map((id) => ({ id, height: 0 }));
+    const rowMetas: Record<RowId, YDoc> = Object.fromEntries(
+      Object.entries(values).map(([rowId, value]) => [
+        rowId,
+        createRowDoc(rowId, databaseId, {
+          [fieldId]: createCell(FieldType.RichText, value),
+        }),
+      ])
+    );
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('10,9,8,7,6,5,4,3,2,1');
+    const sorts = createSorts([{ fieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas).map((row) => row.id);
+
+    const collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true, usage: 'sort' });
+    const expected = [...rows]
+      .sort((a, b) => collator.compare(values[a.id], values[b.id]))
+      .map((row) => row.id);
+
+    expect(result).toEqual(expected);
+  });
+});
+
+describe('relation and rollup sort tests', () => {
+  const databaseId = 'db-sort-relation';
+  const relationFieldId = 'relation-field';
+  const rollupTextFieldId = 'rollup-text-field';
+  const rollupNumericFieldId = 'rollup-numeric-field';
+  const fields = new Map() as unknown as YDatabaseFields;
+
+  fields.set(relationFieldId, createField(relationFieldId, FieldType.Relation));
+  fields.set(
+    rollupTextFieldId,
+    createFieldWithTypeOption(rollupTextFieldId, FieldType.Rollup, {
+      [YjsDatabaseKey.show_as]: RollupDisplayMode.OriginalList,
+      [YjsDatabaseKey.calculation_type]: CalculationType.Count,
+    })
+  );
+  fields.set(
+    rollupNumericFieldId,
+    createFieldWithTypeOption(rollupNumericFieldId, FieldType.Rollup, {
+      [YjsDatabaseKey.show_as]: RollupDisplayMode.Calculated,
+      [YjsDatabaseKey.calculation_type]: CalculationType.Sum,
+    })
+  );
+
+  const rows: Row[] = ['row-a', 'row-b', 'row-c'].map((id) => ({ id, height: 0 }));
+  const rowMetas: Record<RowId, YDoc> = {
+    'row-a': createRowDoc('row-a', databaseId, {
+      [relationFieldId]: createCell(FieldType.Relation, ''),
+    }),
+    'row-b': createRowDoc('row-b', databaseId, {
+      [relationFieldId]: createCell(FieldType.Relation, ''),
+    }),
+    'row-c': createRowDoc('row-c', databaseId, {
+      [relationFieldId]: createCell(FieldType.Relation, ''),
+    }),
+  };
+
+  const relationTexts: Record<RowId, string> = {
+    'row-a': 'Beta',
+    'row-b': 'Alpha',
+    'row-c': '',
+  };
+
+  const rollupTextValues: Record<RowId, { value: string }> = {
+    'row-a': { value: 'Gamma' },
+    'row-b': { value: 'Alpha' },
+    'row-c': { value: '' },
+  };
+
+  const rollupNumericValues: Record<RowId, { value: string; rawNumeric?: number }> = {
+    'row-a': { value: '10', rawNumeric: 10 },
+    'row-b': { value: '2', rawNumeric: 2 },
+    'row-c': { value: '', rawNumeric: undefined },
+  };
+
+  it('sorts relation field by linked row text', () => {
+    const sorts = createSorts([{ fieldId: relationFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas, {
+      getRelationCellText: (rowId) => relationTexts[rowId] ?? '',
+    }).map((row) => row.id);
+
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
   });
 
-  it('should sort by SingleSelect field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withSingleSelectOptionSort();
-    sorts.push([sort]);
+  it('ignores list-output rollup field in sorting', () => {
+    const sorts = createSorts([{ fieldId: rollupTextFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas, {
+      getRollupCellValue: (rowId) => rollupTextValues[rowId] ?? { value: '' },
+    }).map((row) => row.id);
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,4,7,10,2,5,8,3,6,9');
+    expect(result).toEqual(['row-a', 'row-b', 'row-c']);
   });
 
-  it('should sort by SingleSelect field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withSingleSelectOptionSort(false);
-    sorts.push([sort]);
+  it('sorts numeric rollup field', () => {
+    const sorts = createSorts([{ fieldId: rollupNumericFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(rows, sorts, fields, rowMetas, {
+      getRollupCellValue: (rowId) => rollupNumericValues[rowId] ?? { value: '' },
+    }).map((row) => row.id);
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('3,6,9,2,5,8,1,4,7,10');
+    expect(result).toEqual(['row-b', 'row-a', 'row-c']);
+  });
+});
+
+describe('relation and rollup sort tests (v069)', () => {
+  const fixture = createRelationRollupFixtureFromV069({ suffix: 'sort' });
+  const relationField = fixture.baseDatabase
+    .get(YjsDatabaseKey.fields)
+    ?.get(fixture.relationFieldId) as YDatabaseField;
+  const rollupField = fixture.baseDatabase
+    .get(YjsDatabaseKey.fields)
+    ?.get(fixture.rollupSumFieldId) as YDatabaseField;
+
+  let relationTexts: Record<RowId, string>;
+  let rollupValues: Record<RowId, { value: string; rawNumeric?: number }>;
+
+  beforeAll(async () => {
+    relationTexts = {};
+    rollupValues = {};
+    for (const rowId of fixture.baseRowIds) {
+      const rowDoc = fixture.baseRowMetas[rowId];
+      const row = rowDoc
+        .getMap(YjsEditorKey.data_section)
+        .get(YjsEditorKey.database_row) as YDatabaseRow;
+      relationTexts[rowId] = await resolveRelationText({
+        baseDoc: fixture.baseDoc,
+        database: fixture.baseDatabase,
+        relationField,
+        row,
+        rowId,
+        fieldId: fixture.relationFieldId,
+        loadView: fixture.loadView,
+        createRowDoc: fixture.createRowDoc,
+        getViewIdFromDatabaseId: fixture.getViewIdFromDatabaseId,
+      });
+      rollupValues[rowId] = await resolveRollupValue({
+        baseDoc: fixture.baseDoc,
+        database: fixture.baseDatabase,
+        rollupField,
+        row,
+        rowId,
+        fieldId: fixture.rollupSumFieldId,
+        loadView: fixture.loadView,
+        createRowDoc: fixture.createRowDoc,
+        getViewIdFromDatabaseId: fixture.getViewIdFromDatabaseId,
+      });
+    }
   });
 
-  it('should sort by MultiSelect field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withMultiSelectOptionSort();
-    sorts.push([sort]);
+  it('sorts relation field by related names from v069', () => {
+    const sorts = createSorts([{ fieldId: fixture.relationFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(fixture.baseRows, sorts, fixture.baseFields, fixture.baseRowMetas, {
+      getRelationCellText: (rowId) => relationTexts[rowId] ?? '',
+    }).map((row) => row.id);
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,7,5,3,6,9,4,10,2,8');
+    expect(result).toEqual([fixture.baseRowIds[1], fixture.baseRowIds[0], fixture.baseRowIds[2]]);
   });
 
-  it('should sort by MultiSelect field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withMultiSelectOptionSort(false);
-    sorts.push([sort]);
+  it('sorts numeric rollup sum from v069', () => {
+    const sorts = createSorts([{ fieldId: fixture.rollupSumFieldId, condition: SortCondition.Ascending }]);
+    const result = sortBy(fixture.baseRows, sorts, fixture.baseFields, fixture.baseRowMetas, {
+      getRollupCellValue: (rowId) => rollupValues[rowId] ?? { value: '' },
+    }).map((row) => row.id);
 
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('2,8,4,10,3,6,9,5,1,7');
-  });
-
-  it('should sort by Checklist field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withChecklistSort();
-    sorts.push([sort]);
-
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('4,10,1,2,5,6,7,8,3,9');
-  });
-
-  it('should sort by Checklist field in descending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withChecklistSort(false);
-    sorts.push([sort]);
-
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('3,9,1,2,5,6,7,8,4,10');
-  });
-
-  it('should sort by CreatedAt field in ascending order', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withCreatedAtSort();
-    sorts.push([sort]);
-
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
-  });
-
-  it('should sort by LastEditedTime field', () => {
-    const { sorts, fields, rowMap } = withTestingData();
-    const sort = withLastModifiedSort();
-    sorts.push([sort]);
-    const sortedRows = sortBy(rows, sorts, fields, rowMap)
-      .map((row) => row.id)
-      .join(',');
-    expect(sortedRows).toBe('1,2,3,4,5,6,7,8,9,10');
+    expect(rollupValues[fixture.baseRowIds[0]].rawNumeric).toBe(77700);
+    expect(rollupValues[fixture.baseRowIds[1]].rawNumeric).toBe(1294400);
+    expect(result).toEqual([fixture.baseRowIds[0], fixture.baseRowIds[1], fixture.baseRowIds[2]]);
   });
 });

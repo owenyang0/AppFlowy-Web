@@ -1,12 +1,18 @@
+import * as random from 'lib0/random';
+import { nanoid } from 'nanoid';
+import * as Y from 'yjs';
+
 import { GlobalComment, Reaction } from '@/application/comment.type';
 import { openCollabDB } from '@/application/db';
 import {
-  createRowDoc, deleteRowDoc,
+  createRowDoc,
+  deleteRowDoc,
   deleteView,
   getPageDoc,
   getPublishView,
   getPublishViewMeta,
-  getUser, hasCollabCache,
+  getUser,
+  hasCollabCache,
   hasViewMetaCache,
 } from '@/application/services/js-services/cache';
 import { StrategyType } from '@/application/services/js-services/cache/types';
@@ -17,9 +23,7 @@ import {
   fetchViewInfo,
 } from '@/application/services/js-services/fetch';
 import { APIService } from '@/application/services/js-services/http';
-import { SyncManager } from '@/application/services/js-services/sync';
-
-import { AFService, AFServiceConfig } from '@/application/services/services.type';
+import { AFService, AFServiceConfig, WorkspaceMemberProfileUpdate } from '@/application/services/services.type';
 import { emit, EventType } from '@/application/session';
 import { afterAuth, AUTH_CALLBACK_URL, withSignIn } from '@/application/session/sign_in';
 import { getTokenParsed } from '@/application/session/token';
@@ -29,11 +33,20 @@ import {
   UploadTemplatePayload,
 } from '@/application/template.type';
 import {
+  AccessLevel,
+  CreateDatabaseViewPayload,
+  CreateDatabaseViewResponse,
   CreatePagePayload,
   CreateSpacePayload,
   CreateWorkspacePayload,
+  DatabaseCsvImportCreateResponse,
+  DatabaseCsvImportRequest,
+  DatabaseCsvImportStatusResponse,
   DatabaseRelations,
   DuplicatePublishView,
+  DuplicatePublishViewResponse,
+  GenerateAISummaryRowPayload,
+  GenerateAITranslateRowPayload,
   PublishViewPayload,
   QuickNoteEditorData,
   SubscriptionInterval,
@@ -44,18 +57,16 @@ import {
   UpdateSpacePayload,
   UpdateWorkspacePayload,
   UploadPublishNamespacePayload,
+  ViewIconType,
   WorkspaceMember,
-  YjsEditorKey,
+  YjsEditorKey
 } from '@/application/types';
 import { applyYDoc } from '@/application/ydoc/apply';
-import { RepeatedChatMessage } from '@appflowyinc/ai-chat';
-import { nanoid } from 'nanoid';
-import * as Y from 'yjs';
+import { RepeatedChatMessage } from '@/components/chat';
 
 export class AFClientService implements AFService {
+  private clientId: number = random.uint32();
   private deviceId: string = nanoid(8);
-
-  private clientId: string = 'web';
 
   private viewLoaded: Set<string> = new Set();
 
@@ -79,6 +90,10 @@ export class AFClientService implements AFService {
 
   getClientId() {
     return this.clientId;
+  }
+
+  getDeviceId() {
+    return this.deviceId;
   }
 
   async publishView(workspaceId: string, viewId: string, payload?: PublishViewPayload) {
@@ -130,7 +145,7 @@ export class AFClientService implements AFService {
         namespace,
         publishName,
       },
-      isLoaded ? StrategyType.CACHE_FIRST : StrategyType.CACHE_AND_NETWORK,
+      isLoaded ? StrategyType.CACHE_FIRST : StrategyType.CACHE_AND_NETWORK
     );
 
     if (!viewMeta) {
@@ -165,7 +180,7 @@ export class AFClientService implements AFService {
         namespace,
         publishName,
       },
-      isLoaded ? StrategyType.CACHE_FIRST : StrategyType.CACHE_AND_NETWORK,
+      isLoaded ? StrategyType.CACHE_FIRST : StrategyType.CACHE_AND_NETWORK
     );
 
     if (!isLoaded) {
@@ -183,7 +198,6 @@ export class AFClientService implements AFService {
     }
 
     return Promise.reject(new Error('Document not found'));
-
   }
 
   async createRowDoc(rowKey: string) {
@@ -194,8 +208,11 @@ export class AFClientService implements AFService {
     return deleteRowDoc(rowKey);
   }
 
-  async getAppDatabaseViewRelations(workspaceId: string, databaseStorageId: string) {
+  async checkIfCollabExists(workspaceId: string, objectId: string) {
+    return APIService.checkIfCollabExists(workspaceId, objectId);
+  }
 
+  async getAppDatabaseViewRelations(workspaceId: string, databaseStorageId: string) {
     const res = await APIService.getCollab(workspaceId, databaseStorageId, Types.WorkspaceDatabase);
     const doc = new Y.Doc();
 
@@ -204,10 +221,7 @@ export class AFClientService implements AFService {
     const { databases } = doc.getMap(YjsEditorKey.data_section).toJSON();
     const result: DatabaseRelations = {};
 
-    databases.forEach((database: {
-      database_id: string;
-      views: string[]
-    }) => {
+    databases.forEach((database: { database_id: string; views: string[] }) => {
       result[database.database_id] = database.views[0];
     });
     return result;
@@ -266,6 +280,10 @@ export class AFClientService implements AFService {
     return APIService.getView(workspaceId, viewId);
   }
 
+  async createOrphanedView(workspaceId: string, payload: { document_id: string }) {
+    return APIService.createOrphanedView(workspaceId, payload);
+  }
+
   async getAppFavorites(workspaceId: string) {
     return APIService.getAppFavorites(workspaceId);
   }
@@ -291,12 +309,25 @@ export class AFClientService implements AFService {
   }
 
   @withSignIn()
+  async signInWithPassword(params: { email: string; password: string; redirectTo: string }) {
+    return APIService.signInWithPassword(params);
+  }
+
+  async forgotPassword(params: { email: string }) {
+    return APIService.forgotPassword(params);
+  }
+
+  async changePassword(params: { password: string }) {
+    return APIService.changePassword(params);
+  }
+
+  @withSignIn()
   async signInMagicLink({ email }: { email: string; redirectTo: string }) {
     return await APIService.signInWithMagicLink(email, AUTH_CALLBACK_URL);
   }
 
   @withSignIn()
-  async signInOTP(params: { email: string; code: string; redirectTo: string }) {
+  async signInOTP(params: { email: string; code: string; type?: 'magiclink' | 'recovery' }) {
     return APIService.signInOTP(params);
   }
 
@@ -320,6 +351,10 @@ export class AFClientService implements AFService {
     return APIService.signInDiscord(AUTH_CALLBACK_URL);
   }
 
+  async getAuthProviders() {
+    return APIService.getAuthProviders();
+  }
+
   async getWorkspaces() {
     const data = APIService.getWorkspaces();
 
@@ -332,21 +367,29 @@ export class AFClientService implements AFService {
     return data;
   }
 
-  async getCurrentUser() {
+  async getCurrentUser(workspaceId?: string) {
     const token = getTokenParsed();
     const userId = token?.user?.id;
 
-    const user = await getUser(
-      () => APIService.getCurrentUser(),
-      userId,
-      StrategyType.CACHE_AND_NETWORK,
-    );
+    const user = await getUser(() => APIService.getCurrentUser(workspaceId), userId, StrategyType.NETWORK_ONLY);
 
     if (!user) {
       return Promise.reject(new Error('User not found'));
     }
 
     return user;
+  }
+
+  async updateUserProfile(metadata: Record<string, unknown>) {
+    return APIService.updateUserProfile(metadata);
+  }
+
+  async getWorkspaceMemberProfile(workspaceId: string) {
+    return APIService.getWorkspaceMemberProfile(workspaceId);
+  }
+
+  async updateWorkspaceMemberProfile(workspaceId: string, profile: WorkspaceMemberProfileUpdate) {
+    return APIService.updateWorkspaceMemberProfile(workspaceId, profile);
   }
 
   async openWorkspace(workspaceId: string) {
@@ -375,12 +418,18 @@ export class AFClientService implements AFService {
     };
   }
 
-  async duplicatePublishView(params: DuplicatePublishView) {
-    return APIService.duplicatePublishView(params.workspaceId, {
+  async duplicatePublishView(params: DuplicatePublishView): Promise<DuplicatePublishViewResponse> {
+    const response = await APIService.duplicatePublishView(params.workspaceId, {
       dest_view_id: params.spaceViewId,
       published_view_id: params.viewId,
       published_collab_type: params.collabType,
     });
+
+    // Transform snake_case API response to camelCase for frontend use
+    return {
+      viewId: response.view_id,
+      databaseMappings: response.database_mappings || {},
+    };
   }
 
   createCommentOnPublishView(viewId: string, content: string, replyCommentId: string | undefined): Promise<void> {
@@ -427,10 +476,7 @@ export class AFClientService implements AFService {
     return APIService.getTemplateById(id);
   }
 
-  async getTemplates(params: {
-    categoryId?: string;
-    nameContains?: string;
-  }) {
+  async getTemplates(params: { categoryId?: string; nameContains?: string }) {
     return APIService.getTemplates(params);
   }
 
@@ -466,10 +512,7 @@ export class AFClientService implements AFService {
     return APIService.uploadTemplateAvatar(file);
   }
 
-  async getPageDoc(workspaceId: string, viewId: string, errorCallback?: (error: {
-    code: number;
-  }) => void) {
-
+  async getPageDoc(workspaceId: string, viewId: string, errorCallback?: (error: { code: number }) => void) {
     const token = getTokenParsed();
     const userId = token?.user.id;
 
@@ -477,7 +520,7 @@ export class AFClientService implements AFService {
       throw new Error('User not found');
     }
 
-    const name = `${userId}_${workspaceId}_${viewId}`;
+    const name = viewId;
 
     const isLoaded = this.viewLoaded.has(name);
 
@@ -499,7 +542,7 @@ export class AFClientService implements AFService {
         }
       },
       name,
-      isLoaded ? StrategyType.CACHE_FIRST : StrategyType.CACHE_AND_NETWORK,
+      StrategyType.CACHE_ONLY
     );
 
     if (!isLoaded) {
@@ -549,25 +592,36 @@ export class AFClientService implements AFService {
     return APIService.getWorkspaceSubscriptions(workspaceId);
   }
 
-  registerDocUpdate(doc: Y.Doc, context: {
-    workspaceId: string, objectId: string, collabType: Types
-  }) {
-    const token = getTokenParsed();
-    const userId = token?.user.id;
-
-    if (!userId) {
-      throw new Error('User not found');
-    }
-
-    const sync = new SyncManager(doc, { userId, ...context });
-
-    sync.initialize();
-  }
-
   async importFile(file: File, onProgress: (progress: number) => void) {
     const task = await APIService.createImportTask(file);
 
     await APIService.uploadImportFile(task.presignedUrl, file, onProgress);
+  }
+
+  async createDatabaseCsvImportTask(
+    workspaceId: string,
+    payload: DatabaseCsvImportRequest
+  ): Promise<DatabaseCsvImportCreateResponse> {
+    return APIService.createDatabaseCsvImportTask(workspaceId, payload);
+  }
+
+  async uploadDatabaseCsvImportFile(
+    presignedUrl: string,
+    file: File,
+    onProgress?: (progress: number) => void
+  ): Promise<void> {
+    return APIService.uploadDatabaseCsvImportFile(presignedUrl, file, onProgress);
+  }
+
+  async getDatabaseCsvImportStatus(
+    workspaceId: string,
+    taskId: string
+  ): Promise<DatabaseCsvImportStatusResponse> {
+    return APIService.getDatabaseCsvImportStatus(workspaceId, taskId);
+  }
+
+  async cancelDatabaseCsvImportTask(workspaceId: string, taskId: string): Promise<void> {
+    return APIService.cancelDatabaseCsvImportTask(workspaceId, taskId);
   }
 
   async createSpace(workspaceId: string, payload: CreateSpacePayload) {
@@ -580,6 +634,10 @@ export class AFClientService implements AFService {
 
   async addAppPage(workspaceId: string, parentViewId: string, payload: CreatePagePayload) {
     return APIService.addAppPage(workspaceId, parentViewId, payload);
+  }
+
+  async createDatabaseView(workspaceId: string, viewId: string, payload: CreateDatabaseViewPayload): Promise<CreateDatabaseViewResponse> {
+    return APIService.createDatabaseView(workspaceId, viewId, payload);
   }
 
   async updateAppPage(workspaceId: string, viewId: string, data: UpdatePagePayload) {
@@ -626,11 +684,14 @@ export class AFClientService implements AFService {
     return APIService.getMembers(workspaceId);
   }
 
-  getQuickNoteList(workspaceId: string, params: {
-    offset?: number;
-    limit?: number;
-    searchTerm?: string;
-  }) {
+  getQuickNoteList(
+    workspaceId: string,
+    params: {
+      offset?: number;
+      limit?: number;
+      searchTerm?: string;
+    }
+  ) {
     return APIService.getQuickNoteList(workspaceId, params);
   }
 
@@ -650,11 +711,7 @@ export class AFClientService implements AFService {
     return APIService.searchWorkspace(workspaceId, query);
   }
 
-  async getChatMessages(
-    workspaceId: string,
-    chatId: string,
-    limit?: number | undefined,
-  ): Promise<RepeatedChatMessage> {
+  async getChatMessages(workspaceId: string, chatId: string, limit?: number | undefined): Promise<RepeatedChatMessage> {
     return APIService.getChatMessages(workspaceId, chatId, limit);
   }
 
@@ -664,5 +721,69 @@ export class AFClientService implements AFService {
 
   async getWorkspaceInfoByInvitationCode(code: string) {
     return APIService.getWorkspaceInfoByInvitationCode(code);
+  }
+
+  async generateAISummaryForRow(workspaceId: string, payload: GenerateAISummaryRowPayload) {
+    return APIService.generateAISummaryForRow(workspaceId, payload);
+  }
+
+  async generateAITranslateForRow(workspaceId: string, payload: GenerateAITranslateRowPayload) {
+    return APIService.generateAITranslateForRow(workspaceId, payload);
+  }
+
+  async getGuestInvitation(workspaceId: string, code: string) {
+    return APIService.getGuestInvitation(workspaceId, code);
+  }
+
+  async acceptGuestInvitation(workspaceId: string, code: string) {
+    return APIService.acceptGuestInvitation(workspaceId, code);
+  }
+
+  async getGuestToMemberConversionInfo(workspaceId: string, code: string) {
+    return APIService.getGuestToMemberConversionInfo(workspaceId, code);
+  }
+
+  async approveTurnGuestToMember(workspaceId: string, code: string) {
+    return APIService.approveTurnGuestToMember(workspaceId, code);
+  }
+
+  async getMentionableUsers(workspaceId: string) {
+    return APIService.getMentionableUsers(workspaceId);
+  }
+
+  async addRecentPages(workspaceId: string, viewIds: string[]) {
+    return APIService.addRecentPages(workspaceId, viewIds);
+  }
+
+  async updateAppPageIcon(
+    workspaceId: string,
+    viewId: string,
+    icon: { ty: ViewIconType; value: string }
+  ): Promise<void> {
+    return APIService.updatePageIcon(workspaceId, viewId, icon);
+  }
+
+  async updateAppPageName(workspaceId: string, viewId: string, name: string): Promise<void> {
+    return APIService.updatePageName(workspaceId, viewId, name);
+  }
+
+  async getShareDetail(workspaceId: string, viewId: string, ancestorViewIds: string[]) {
+    return APIService.getShareDetail(workspaceId, viewId, ancestorViewIds);
+  }
+
+  async sharePageTo(workspaceId: string, viewId: string, emails: string[], accessLevel?: AccessLevel) {
+    return APIService.sharePageTo(workspaceId, viewId, emails, accessLevel);
+  }
+
+  async revokeAccess(workspaceId: string, viewId: string, emails: string[]) {
+    return APIService.revokeAccess(workspaceId, viewId, emails);
+  }
+
+  async turnIntoMember(workspaceId: string, email: string) {
+    return APIService.turnIntoMember(workspaceId, email);
+  }
+
+  async getShareWithMe(workspaceId: string) {
+    return APIService.getShareWithMe(workspaceId);
   }
 }

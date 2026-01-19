@@ -1,16 +1,17 @@
-import { UIVariant } from '@/application/types';
-import OutlineItem from '@/components/_shared/outline/OutlineItem';
-import { Popover } from '@/components/_shared/popover';
-import RecentListSkeleton from '@/components/_shared/skeleton/RecentListSkeleton';
-import { useAppFavorites, useAppHandlers, useAppViewId } from '@/components/app/app.hooks';
 import { Collapse } from '@mui/material';
 import { PopoverProps } from '@mui/material/Popover';
 import dayjs from 'dayjs';
 import { groupBy, sortBy } from 'lodash-es';
 import React, { useEffect, useMemo } from 'react';
-import { ReactComponent as FavoritedIcon } from '@/assets/icons/filled_star.svg';
 import { useTranslation } from 'react-i18next';
+
+import { UIVariant } from '@/application/types';
+import { ReactComponent as FavoritedIcon } from '@/assets/icons/filled_star.svg';
 import { ReactComponent as MoreIcon } from '@/assets/icons/more.svg';
+import OutlineItem from '@/components/_shared/outline/OutlineItem';
+import { Popover } from '@/components/_shared/popover';
+import RecentListSkeleton from '@/components/_shared/skeleton/RecentListSkeleton';
+import { useAppFavorites, useAppHandlers, useSidebarSelectedViewId } from '@/components/app/app.hooks';
 
 const popoverOrigin: Partial<PopoverProps> = {
   transformOrigin: {
@@ -33,7 +34,7 @@ enum FavoriteGroup {
 export function Favorite() {
   const { favoriteViews, loadFavoriteViews } = useAppFavorites();
   const navigateToView = useAppHandlers().toView;
-  const viewId = useAppViewId();
+  const viewId = useSidebarSelectedViewId();
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = React.useState(() => {
     return localStorage.getItem('favorite_expanded') !== 'false';
@@ -51,12 +52,27 @@ export function Favorite() {
   };
 
   const { pinViews, unpinViews } = useMemo(() => {
+    if (!favoriteViews) {
+      return { pinViews: [], unpinViews: [] };
+    }
+
     return groupBy(favoriteViews, (view) => (view.extra?.is_pinned ? 'pinViews' : 'unpinViews'));
   }, [favoriteViews]);
 
   const groupByViewsWithDay = useMemo(() => {
+    if (!favoriteViews) return {};
+
     return groupBy(favoriteViews, (view) => {
+      if (!view.favorited_at) {
+        return FavoriteGroup.Others;
+      }
+
       const date = dayjs(view.favorited_at);
+
+      if (!date.isValid()) {
+        return FavoriteGroup.Others;
+      }
+
       const today = date.isSame(dayjs(), 'day');
       const yesterday = date.isSame(dayjs().subtract(1, 'day'), 'day');
       const thisWeek = date.isSame(dayjs(), 'week');
@@ -73,10 +89,10 @@ export function Favorite() {
       return key === FavoriteGroup.today
         ? 0
         : key === FavoriteGroup.yesterday
-        ? 1
-        : key === FavoriteGroup.thisWeek
-        ? 2
-        : 3;
+          ? 1
+          : key === FavoriteGroup.thisWeek
+            ? 2
+            : 3;
     }).map(([key, value]) => {
       const timeLabel: Record<string, string> = {
         [FavoriteGroup.today]: t('calendar.navigation.today'),
@@ -87,7 +103,7 @@ export function Favorite() {
 
       return (
         <div className={'flex flex-col gap-2'} key={key}>
-          <div className={'py-1 px-1 text-xs text-text-caption'}>{timeLabel[key]}</div>
+          <div className={'px-1 py-1 text-xs text-text-secondary'}>{timeLabel[key]}</div>
           <div className={'px-1'}>
             {value.map((view) => (
               <OutlineItem variant={UIVariant.Favorite} key={view.view_id} view={view} navigateToView={navigateToView} />
@@ -107,7 +123,7 @@ export function Favorite() {
       <div onClick={handleToggleExpand} className={'my-0.5 flex h-fit w-full cursor-pointer flex-col gap-2'}>
         <div
           className={
-            'flex w-full items-center gap-2 rounded-[8px] p-1 text-sm hover:bg-fill-list-hover focus:outline-none'
+            'flex w-full items-center gap-2 rounded-[8px] p-1 text-sm hover:bg-fill-content-hover focus:outline-none'
           }
         >
           <FavoritedIcon className={'h-5 w-5'} />
@@ -134,10 +150,10 @@ export function Favorite() {
               }}
               ref={moreButtonRef}
               className={
-                'flex w-full cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1.5 text-sm hover:bg-content-blue-50 focus:bg-content-blue-50 focus:outline-none'
+                'flex w-full cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1.5 text-sm hover:bg-fill-theme-select focus:bg-fill-theme-select focus:outline-none'
               }
             >
-              <MoreIcon className={'h-5 w-5 text-text-caption'} />
+              <MoreIcon className={'h-5 w-5 text-text-secondary'} />
               <div>{t('button.more')}</div>
             </div>
           )}

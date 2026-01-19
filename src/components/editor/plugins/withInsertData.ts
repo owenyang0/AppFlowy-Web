@@ -1,11 +1,13 @@
-import { CustomEditor } from '@/application/slate-yjs/command';
-import { YjsEditor } from '@/application/slate-yjs';
-import { findSlateEntryByBlockId, getBlockEntry } from '@/application/slate-yjs/utils/editor';
-import { ReactEditor } from 'slate-react';
-import { BlockType, FieldURLType, FileBlockData, ImageBlockData, ImageType } from '@/application/types';
-import { FileHandler } from '@/utils/file';
-import { convertSlateFragmentTo } from '@/components/editor/utils/fragment';
 import { Node } from 'slate';
+import { ReactEditor } from 'slate-react';
+
+import { YjsEditor } from '@/application/slate-yjs';
+import { CustomEditor } from '@/application/slate-yjs/command';
+import { findSlateEntryByBlockId, getBlockEntry } from '@/application/slate-yjs/utils/editor';
+import { BlockType, FieldURLType, FileBlockData, ImageBlockData, ImageType } from '@/application/types';
+import { convertSlateFragmentTo } from '@/components/editor/utils/fragment';
+import { FileHandler } from '@/utils/file';
+
 
 export const withInsertData = (editor: ReactEditor) => {
   const { insertData } = editor;
@@ -27,7 +29,13 @@ export const withInsertData = (editor: ReactEditor) => {
     const fileArray = Array.from(data.files);
     const { selection } = editor;
     const entry = getBlockEntry(e);
+
+    if (!entry) return;
+
     const [node] = entry;
+
+    if (!node) return;
+
     const blockId = node.blockId;
 
     insertData(data);
@@ -91,7 +99,11 @@ export const withInsertData = (editor: ReactEditor) => {
 
           if (!id) return;
 
-          const [, path] = findSlateEntryByBlockId(e, id);
+          const entry = findSlateEntryByBlockId(e, id);
+
+          if (!entry) return;
+
+          const [, path] = entry;
 
           editor.select(editor.start(path));
 

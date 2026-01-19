@@ -1,4 +1,5 @@
 import { Element, NodeEntry } from 'slate';
+
 import type Y from 'yjs';
 
 export type HistoryStackItem = {
@@ -30,7 +31,8 @@ export enum EditorMarkFormat {
   Formula = 'formula',
   Mention = 'mention',
   FontColor = 'font_color',
+  FontToken = 'af_text_color',
   BgColor = 'bg_color',
+  BgToken = 'af_background_color',
   Align = 'align',
 }
-

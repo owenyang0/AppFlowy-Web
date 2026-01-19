@@ -1,23 +1,21 @@
-import {
-  useDatabaseContext,
-  useDatabaseView,
-  useFiltersSelector,
-  useSortsSelector,
-} from '@/application/database-yjs';
+import { useMemo } from 'react';
+
+import { useDatabaseContext, useDatabaseView, useFiltersSelector, useSortsSelector } from '@/application/database-yjs';
 import { DatabaseViewLayout, YjsDatabaseKey } from '@/application/types';
 import { AFScroller } from '@/components/_shared/scroller';
 import { useConditionsContext } from '@/components/database/components/conditions/context';
-import React, { useMemo } from 'react';
+import { Separator } from '@/components/ui/separator';
+
 import Filters from 'src/components/database/components/filters/Filters';
 import Sorts from 'src/components/database/components/sorts/Sorts';
 
-export function DatabaseConditions () {
+export function DatabaseConditions() {
   const conditionsContext = useConditionsContext();
   const expanded = conditionsContext?.expanded ?? false;
   const sorts = useSortsSelector();
   const filters = useFiltersSelector();
   const view = useDatabaseView();
-  const scrollLeft = useDatabaseContext().scrollLeft;
+  const { paddingStart, paddingEnd } = useDatabaseContext();
   const layout = Number(view?.get(YjsDatabaseKey.layout));
   const className = useMemo(() => {
     const classList = ['database-conditions min-w-0 max-w-full relative transform overflow-hidden transition-all'];
@@ -36,20 +34,19 @@ export function DatabaseConditions () {
   return (
     <div
       style={{
+        // Collapse to 0 height when not expanded to avoid unnecessary space
         height: expanded ? '40px' : '0',
-        paddingInline: scrollLeft === undefined ? '96px' : `${scrollLeft}px`,
-        paddingRight: layout === DatabaseViewLayout.Grid ? '0' : undefined,
+        visibility: expanded ? 'visible' : 'hidden',
+        opacity: expanded ? 1 : 0,
+        pointerEvents: expanded ? 'auto' : 'none',
+        paddingLeft: paddingStart === undefined ? '96px' : paddingStart,
+        paddingRight: paddingEnd === undefined ? '96px' : paddingEnd,
       }}
-      className={
-        className
-      }
+      className={className}
     >
-      <AFScroller
-        overflowYHidden
-        className={`flex items-center gap-2`}
-      >
+      <AFScroller overflowYHidden hideScrollbars className={`flex items-center border-b border-border-primary`}>
         <Sorts />
-        {sorts.length > 0 && filters.length > 0 && <div className="h-[20px] w-0 border border-line-divider" />}
+        {sorts.length > 0 && filters.length > 0 && <Separator orientation={'vertical'} className={'!mx-2 !h-5'} />}
         <Filters />
       </AFScroller>
     </div>

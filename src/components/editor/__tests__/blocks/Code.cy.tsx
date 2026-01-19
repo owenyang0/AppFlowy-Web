@@ -1,12 +1,15 @@
-import { initialEditorTest, moveCursor } from '@/components/editor/__tests__/mount';
 import { FromBlockJSON } from 'cypress/support/document';
 
-const initialData: FromBlockJSON[] = [{
-  type: 'paragraph',
-  data: {},
-  text: [{ insert: '' }],
-  children: [],
-}];
+import { initialEditorTest, moveCursor } from '@/components/editor/__tests__/mount';
+
+const initialData: FromBlockJSON[] = [
+  {
+    type: 'paragraph',
+    data: {},
+    text: [{ insert: '' }],
+    children: [],
+  },
+];
 
 const { assertJSON, initializeEditor } = initialEditorTest();
 
@@ -27,12 +30,12 @@ describe('CodeBlock', () => {
   it('should turn to code block when typing ```', () => {
     moveCursor(0, 0);
     cy.get('@editor').type('```');
-    cy.get('@editor').type(`function main() {\n  console.log('Hello, World!');\n}`);
+    cy.get('@editor').type(`function main() {\n  console.debug('Hello, World!');\n}`);
     assertJSON([
       {
         type: 'code',
         data: {},
-        text: [{ insert: 'function main() {\n  console.log(\'Hello, World!\');\n}' }],
+        text: [{ insert: "function main() {\n  console.debug('Hello, World!');\n}" }],
         children: [],
       },
     ]);
@@ -41,7 +44,7 @@ describe('CodeBlock', () => {
   it('should add a paragraph below the code block when pressing Shift+Enter', () => {
     moveCursor(0, 0);
     cy.get('@editor').type('```');
-    cy.get('@editor').type(`function main() {\n  console.log('Hello, World!');\n}`);
+    cy.get('@editor').type(`function main() {\n  console.debug('Hello, World!');\n}`);
     cy.get('@editor').get('[data-block-type="code"]').as('code');
     cy.get('@code').should('exist');
     cy.get('@editor').realPress(['Shift', 'Enter']);
@@ -49,7 +52,7 @@ describe('CodeBlock', () => {
       {
         type: 'code',
         data: {},
-        text: [{ insert: 'function main() {\n  console.log(\'Hello, World!\');\n}' }],
+        text: [{ insert: "function main() {\n  console.debug('Hello, World!');\n}" }],
         children: [],
       },
       {
@@ -64,14 +67,14 @@ describe('CodeBlock', () => {
   it('should insert soft break when pressing Enter', () => {
     moveCursor(0, 0);
     cy.get('@editor').type('```');
-    cy.get('@editor').type(`function main() {\n  console.log('Hello, World!');\n}`);
+    cy.get('@editor').type(`function main() {\n  console.debug('Hello, World!');\n}`);
 
     cy.get('@editor').realPress('Enter');
     assertJSON([
       {
         type: 'code',
         data: {},
-        text: [{ insert: 'function main() {\n  console.log(\'Hello, World!\');\n}\n' }],
+        text: [{ insert: "function main() {\n  console.debug('Hello, World!');\n}\n" }],
         children: [],
       },
     ]);
@@ -80,7 +83,7 @@ describe('CodeBlock', () => {
   it('should remove the code block when pressing Backspace at the beginning', () => {
     moveCursor(0, 0);
     cy.get('@editor').type('```');
-    cy.get('@editor').type(`function main() {\n  console.log('Hello, World!');\n}`);
+    cy.get('@editor').type(`function main() {\n  console.debug('Hello, World!');\n}`);
 
     cy.get('@editor').get('[data-block-type="code"]').as('code');
     cy.get('@code').should('exist');
@@ -91,10 +94,9 @@ describe('CodeBlock', () => {
       {
         type: 'paragraph',
         data: {},
-        text: [{ insert: 'function main() {\n  console.log(\'Hello, World!\');\n}' }],
+        text: [{ insert: "function main() {\n  console.debug('Hello, World!');\n}" }],
         children: [],
       },
     ]);
   });
-
 });

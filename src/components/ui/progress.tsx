@@ -1,5 +1,6 @@
-import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
+import * as React from 'react';
+
 import { cn } from '@/lib/utils';
 
 const progressVariants = cva(
@@ -8,6 +9,8 @@ const progressVariants = cva(
     variants: {
       variant: {
         default: '',
+        inherit: '',
+        primary: '',
       },
       isIndeterminate: {
         true: 'animate-progress-container',
@@ -27,6 +30,8 @@ const circleVariants = cva(
     variants: {
       variant: {
         default: 'stroke-fill-secondary',
+        inherit: 'stroke-fill-secondary',
+        primary: 'stroke-fill-secondary',
       },
     },
     defaultVariants: {
@@ -41,6 +46,8 @@ const progressCircleVariants = cva(
     variants: {
       variant: {
         default: 'stroke-text-on-fill',
+        inherit: 'stroke-icon-primary',
+        primary: 'stroke-text-action',
       },
     },
     defaultVariants: {

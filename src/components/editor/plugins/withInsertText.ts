@@ -1,10 +1,12 @@
+import { BaseRange, NodeEntry, Point, Range, Text, Transforms } from 'slate';
+import { TextInsertTextOptions } from 'slate/dist/interfaces/transforms/text';
+import { ReactEditor } from 'slate-react';
+
 import { YjsEditor } from '@/application/slate-yjs';
 import { isEmbedBlockTypes } from '@/application/slate-yjs/command/const';
 import { getBlockEntry } from '@/application/slate-yjs/utils/editor';
 import { BlockType } from '@/application/types';
-import { BaseRange, NodeEntry, Point, Range, Text, Transforms } from 'slate';
-import { ReactEditor } from 'slate-react';
-import { TextInsertTextOptions } from 'slate/dist/interfaces/transforms/text';
+import { Log } from '@/utils/log';
 
 export const withInsertText = (editor: ReactEditor) => {
   const { insertText } = editor;
@@ -18,14 +20,22 @@ export const withInsertText = (editor: ReactEditor) => {
     }
 
     const point = newAt.anchor;
-    const [blockNode] = getBlockEntry(editor as YjsEditor, point);
+
+    const entry = getBlockEntry(editor as YjsEditor, point);
+
+    if (!entry) return;
+
+    const [blockNode] = entry;
+
+    if (!blockNode) return;
 
     if (blockNode && isEmbedBlockTypes(blockNode.type as BlockType)) {
       return;
     }
 
     const [textEntry] = editor.nodes({
-      at: point, match: n => {
+      at: point,
+      match: (n) => {
         return Text.isText(n);
       },
     });
@@ -38,7 +48,7 @@ export const withInsertText = (editor: ReactEditor) => {
 
     // If the text node is a formula or mention, split the node and insert the text
     if (textNode.formula || textNode.mention) {
-      console.log('Inserting text into formula or mention', newAt);
+      Log.debug('Inserting text into formula or mention', newAt);
       Transforms.insertNodes(editor, { text }, { at: point, select: true, voids: false });
 
       return;

@@ -1,8 +1,9 @@
+import orderBy from 'lodash-es/orderBy';
+import { useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import MobileOutlineWithCover from '@/components/_shared/mobile-outline/MobileOutlineWithCover';
 import { useAppFavorites, useAppHandlers } from '@/components/app/app.hooks';
-import orderBy from 'lodash-es/orderBy';
-import React, { useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 function MobileFavorite ({
   onClose,

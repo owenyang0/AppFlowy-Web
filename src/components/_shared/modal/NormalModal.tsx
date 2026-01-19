@@ -1,6 +1,7 @@
+import { Button, ButtonProps, CircularProgress, Dialog, DialogProps, IconButton } from '@mui/material';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, ButtonProps, CircularProgress, Dialog, DialogProps, IconButton } from '@mui/material';
+
 import { ReactComponent as CloseIcon } from '@/assets/icons/close.svg';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -95,6 +96,7 @@ export function NormalModal ({
             {modalCancelText}
           </Button>
           <Button
+            data-testid={danger ? 'confirm-delete-button' : 'modal-ok-button'}
             color={danger ? 'error' : 'primary'}
             variant={'contained'}
             size={'small'}

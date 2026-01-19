@@ -1,6 +1,8 @@
 import { AxiosInstance } from 'axios';
 import * as Y from 'yjs';
 
+import { PromptDatabaseConfiguration } from '@/components/chat';
+
 export type BlockId = string;
 
 export type ExternalId = string;
@@ -43,6 +45,8 @@ export enum BlockType {
   SimpleTableCellBlock = 'simple_table_cell',
   ColumnsBlock = 'simple_columns',
   ColumnBlock = 'simple_column',
+  AIMeetingBlock = 'ai_meeting',
+  PDFBlock = 'pdf',
 }
 
 export enum InlineBlockType {
@@ -89,7 +93,8 @@ export interface CodeBlockData extends BlockData {
 
 export interface CalloutBlockData extends BlockData {
   icon: string;
-  icon_type?: 'emoji' | 'icon',
+  icon_type?: 'emoji' | 'icon';
+  textColor?: string;
 }
 
 export interface MathEquationBlockData extends BlockData {
@@ -142,6 +147,18 @@ export interface VideoBlockData extends BlockData {
   video_type?: VideoType;
 }
 
+export interface AIMeetingBlockData extends BlockData {
+  title?: string;
+}
+
+export interface PDFBlockData extends BlockData {
+  name?: string;
+  uploaded_at?: number;
+  url?: string;
+  url_type?: FieldURLType;
+  retry_local_url?: string;
+}
+
 export enum GalleryLayout {
   Carousel = 0,
   Grid = 1,
@@ -149,8 +166,8 @@ export enum GalleryLayout {
 
 export interface GalleryBlockData extends BlockData {
   images: {
-    type: ImageType,
-    url: string,
+    type: ImageType;
+    url: string;
   }[];
   layout: GalleryLayout;
 }
@@ -194,7 +211,10 @@ export interface TableCellBlockData extends BlockData {
 }
 
 export interface DatabaseNodeData extends BlockData {
-  view_id: ViewId;
+  view_id?: ViewId;
+  view_ids?: ViewId[];
+  parent_id?: ViewId;
+  database_id?: string;
 }
 
 export interface SubpageNodeData extends BlockData {
@@ -210,6 +230,7 @@ export enum MentionType {
   Date = 'date',
   childPage = 'childPage',
   externalLink = 'externalLink',
+  Person = 'person',
 }
 
 export interface Mention {
@@ -224,6 +245,10 @@ export interface Mention {
   // external link
   url?: string;
   type: MentionType;
+
+  // mention person
+  person_id?: string;
+  person_name?: string;
 }
 
 export interface FolderMeta {
@@ -319,12 +344,18 @@ export enum YjsDatabaseKey {
   data = 'data',
   iid = 'iid',
   database_id = 'database_id',
+  relation_field_id = 'relation_field_id',
+  target_field_id = 'target_field_id',
+  calculation_type = 'calculation_type',
+  show_as = 'show_as',
+  condition_value = 'condition_value',
   field_orders = 'field_orders',
   field_settings = 'field_settings',
   visibility = 'visibility',
   wrap = 'wrap',
   width = 'width',
   filters = 'filters',
+  children = 'children',
   groups = 'groups',
   layout = 'layout',
   layout_settings = 'layout_settings',
@@ -338,12 +369,14 @@ export enum YjsDatabaseKey {
   include_time = 'include_time',
   is_range = 'is_range',
   reminder_id = 'reminder_id',
-  time_format = 'time_format',
-  date_format = 'date_format',
+  time_format = 'time_format_v2',
+  date_format = 'date_format_v2',
   calculations = 'calculations',
   field_id = 'field_id',
   calculation_value = 'calculation_value',
+  source_field_type = 'source_field_type', // Added this
   condition = 'condition',
+  schema_version = 'schema_version',
   format = 'format',
   filter_type = 'filter_type',
   visible = 'visible',
@@ -354,156 +387,184 @@ export enum YjsDatabaseKey {
   show_weekends = 'show_weekends',
   layout_ty = 'layout_ty',
   icon = 'icon',
+  is_inline = 'is_inline',
+  embedded = 'embedded',
+  auto_fill = 'auto_fill',
+  language = 'language',
+  number_of_days = 'number_of_days',
 }
 
+/**
+ * YDoc extends Y.Doc with AppFlowy-specific properties.
+ *
+ * Document Identification:
+ * - `object_id`: The view ID that this document belongs to. Set when loading a document
+ *                via loadView(). Used to verify the document matches the current view
+ *                and prevent race conditions when navigating between pages.
+ * - `guid`: The Y.Doc globally unique identifier. In AppFlowy, this is typically
+ *           set to the viewId when creating the document via openCollabDB(viewId).
+ *           The guid is used for sync context registration and WebSocket communication.
+ *
+ * Note: Both `object_id` and `guid` typically contain the same viewId value, but they serve
+ * different purposes:
+ * - `object_id` is for React state tracking to ensure rendered content matches current route
+ * - `guid` is for Yjs sync protocol and collab document identity
+ */
 export interface YDoc extends Y.Doc {
+  /**
+   * The view ID this document belongs to.
+   * Set when loading a document via loadView() to track which view the doc is for.
+   */
+  object_id?: string;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  getMap (key: YjsEditorKey.data_section): YSharedRoot | any;
+  getMap(key: YjsEditorKey.data_section): YSharedRoot | any;
 }
 
 export interface YDatabaseRow extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): RowId;
+  get(key: YjsDatabaseKey.id): RowId;
 
-  get (key: YjsDatabaseKey.height): string;
+  get(key: YjsDatabaseKey.database_id | YjsDatabaseKey.height): string;
 
-  get (key: YjsDatabaseKey.visibility): boolean;
+  get(key: YjsDatabaseKey.visibility): boolean;
 
-  get (key: YjsDatabaseKey.cells): YDatabaseCells;
+  get(key: YjsDatabaseKey.cells): YDatabaseCells;
 
-  get (key: YjsDatabaseKey.created_at): CreatedAt;
+  get(key: YjsDatabaseKey.created_at): CreatedAt;
 
-  get (key: YjsDatabaseKey.last_modified): LastModified;
-
+  get(key: YjsDatabaseKey.last_modified): LastModified;
 }
 
 export interface YDatabaseCells extends Y.Map<unknown> {
-  get (key: FieldId): YDatabaseCell;
+  get(key: FieldId): YDatabaseCell;
 }
 
 export type EndTimestamp = string;
 export type ReminderId = string;
 
 export interface YDatabaseCell extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.created_at): CreatedAt;
+  get(key: YjsDatabaseKey.created_at): CreatedAt;
 
-  get (key: YjsDatabaseKey.last_modified): LastModified;
+  get(key: YjsDatabaseKey.last_modified): LastModified;
 
-  get (key: YjsDatabaseKey.field_type): string;
+  get(key: YjsDatabaseKey.field_type | YjsDatabaseKey.source_field_type): string;
 
-  get (key: YjsDatabaseKey.data): object | string | boolean | number;
+  get(key: YjsDatabaseKey.data): string | boolean | number | null | Y.Array<string> | object;
 
-  get (key: YjsDatabaseKey.end_timestamp): EndTimestamp;
+  get(key: YjsDatabaseKey.end_timestamp): EndTimestamp;
 
-  get (key: YjsDatabaseKey.include_time): boolean;
+  get(key: YjsDatabaseKey.include_time): boolean;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.is_range): boolean;
+  get(key: YjsDatabaseKey.is_range): boolean;
 
-  get (key: YjsDatabaseKey.reminder_id): ReminderId;
+  get(key: YjsDatabaseKey.reminder_id): ReminderId;
 }
 
 export interface YSharedRoot extends Y.Map<unknown> {
-  get (key: YjsEditorKey.document): YDocument;
+  get(key: YjsEditorKey.document): YDocument;
 
-  get (key: YjsEditorKey.folder): YFolder;
+  get(key: YjsEditorKey.folder): YFolder;
 
-  get (key: YjsEditorKey.database): YDatabase;
+  get(key: YjsEditorKey.database): YDatabase;
 
-  get (key: YjsEditorKey.database_row): YDatabaseRow;
+  get(key: YjsEditorKey.database_row): YDatabaseRow;
+
+  get(key: YjsEditorKey.meta): Y.Map<unknown>;
 }
 
 export interface YFolder extends Y.Map<unknown> {
-  get (key: YjsFolderKey.views): YViews;
+  get(key: YjsFolderKey.views): YViews;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.meta): YFolderMeta;
+  get(key: YjsFolderKey.meta): YFolderMeta;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.relation): YFolderRelation;
+  get(key: YjsFolderKey.relation): YFolderRelation;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.section): YFolderSection;
+  get(key: YjsFolderKey.section): YFolderSection;
 }
 
 export interface YViews extends Y.Map<unknown> {
-  get (key: ViewId): YView;
+  get(key: ViewId): YView;
 }
 
 export interface YView extends Y.Map<unknown> {
-  get (key: YjsFolderKey.id): ViewId;
+  get(key: YjsFolderKey.id): ViewId;
 
-  get (key: YjsFolderKey.bid): string;
-
-  // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.name): string;
+  get(key: YjsFolderKey.bid): string;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.icon | YjsFolderKey.extra): string;
+  get(key: YjsFolderKey.name): string;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsFolderKey.layout): string;
+  get(key: YjsFolderKey.icon | YjsFolderKey.extra): string;
+
+  // eslint-disable-next-line @typescript-eslint/unified-signatures
+  get(key: YjsFolderKey.layout): string;
 }
 
 export interface YFolderRelation extends Y.Map<unknown> {
-  get (key: ViewId): Y.Array<ViewId>;
+  get(key: ViewId): Y.Array<ViewId>;
 }
 
 export interface YFolderMeta extends Y.Map<unknown> {
-  get (key: YjsFolderKey.current_view | YjsFolderKey.current_workspace): string;
+  get(key: YjsFolderKey.current_view | YjsFolderKey.current_workspace): string;
 }
 
 export interface YFolderSection extends Y.Map<unknown> {
-  get (key: YjsFolderKey.favorite | YjsFolderKey.private | YjsFolderKey.recent | YjsFolderKey.trash): YFolderSectionItem;
+  get(key: YjsFolderKey.favorite | YjsFolderKey.private | YjsFolderKey.recent | YjsFolderKey.trash): YFolderSectionItem;
 }
 
 export interface YFolderSectionItem extends Y.Map<unknown> {
-  get (key: string): Y.Array<unknown>;
+  get(key: string): Y.Array<unknown>;
 }
 
 export interface YDocument extends Y.Map<unknown> {
-  get (key: YjsEditorKey.blocks | YjsEditorKey.page_id | YjsEditorKey.meta): YBlocks | YMeta | string;
+  get(key: YjsEditorKey.blocks | YjsEditorKey.page_id | YjsEditorKey.meta): YBlocks | YMeta | string;
 }
 
 export interface YBlocks extends Y.Map<unknown> {
-  get (key: BlockId): YBlock;
+  get(key: BlockId): YBlock;
 }
 
 export interface YBlock extends Y.Map<unknown> {
-  get (key: YjsEditorKey.block_id | YjsEditorKey.block_parent): BlockId;
+  get(key: YjsEditorKey.block_id | YjsEditorKey.block_parent): BlockId;
 
-  get (key: YjsEditorKey.block_type): BlockType;
+  get(key: YjsEditorKey.block_type): BlockType;
 
-  get (key: YjsEditorKey.block_data): string;
+  get(key: YjsEditorKey.block_data): string;
 
-  get (key: YjsEditorKey.block_children): ChildrenId;
+  get(key: YjsEditorKey.block_children): ChildrenId;
 
-  get (key: YjsEditorKey.block_external_id): ExternalId;
+  get(key: YjsEditorKey.block_external_id): ExternalId;
 }
 
 export interface YMeta extends Y.Map<unknown> {
-  get (key: YjsEditorKey.children_map | YjsEditorKey.text_map): YChildrenMap | YTextMap;
+  get(key: YjsEditorKey.children_map | YjsEditorKey.text_map): YChildrenMap | YTextMap;
 }
 
 export interface YChildrenMap extends Y.Map<unknown> {
-  get (key: ChildrenId): Y.Array<BlockId>;
+  get(key: ChildrenId): Y.Array<BlockId>;
 }
 
 export interface YTextMap extends Y.Map<unknown> {
-  get (key: ExternalId): Y.Text;
+  get(key: ExternalId): Y.Text;
 }
 
 export interface YDatabase extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.views): YDatabaseViews;
+  get(key: YjsDatabaseKey.views): YDatabaseViews;
 
-  get (key: YjsDatabaseKey.metas): YDatabaseMetas;
+  get(key: YjsDatabaseKey.metas): YDatabaseMetas;
 
-  get (key: YjsDatabaseKey.fields): YDatabaseFields;
+  get(key: YjsDatabaseKey.fields): YDatabaseFields;
 
-  get (key: YjsDatabaseKey.id): string;
+  get(key: YjsDatabaseKey.id): string;
 }
 
 export interface YDatabaseViews extends Y.Map<YDatabaseView> {
-  get (key: ViewId): YDatabaseView;
+  get(key: ViewId): YDatabaseView;
 }
 
 export type DatabaseId = string;
@@ -519,37 +580,42 @@ export enum DatabaseViewLayout {
 }
 
 export interface YDatabaseView extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.database_id): DatabaseId;
+  get(key: YjsDatabaseKey.database_id): DatabaseId;
 
-  get (key: YjsDatabaseKey.name): string;
+  get(key: YjsDatabaseKey.name): string;
 
-  get (key: YjsDatabaseKey.created_at): CreatedAt;
+  get(key: YjsDatabaseKey.created_at): CreatedAt;
 
-  get (key: YjsDatabaseKey.modified_at): ModifiedAt;
+  get(key: YjsDatabaseKey.modified_at): ModifiedAt;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.layout): string;
+  get(key: YjsDatabaseKey.layout): string;
 
-  get (key: YjsDatabaseKey.layout_settings): YDatabaseLayoutSettings;
+  get(key: YjsDatabaseKey.layout_settings): YDatabaseLayoutSettings;
 
-  get (key: YjsDatabaseKey.filters): YDatabaseFilters;
+  get(key: YjsDatabaseKey.filters): YDatabaseFilters;
 
-  get (key: YjsDatabaseKey.groups): YDatabaseGroups;
+  get(key: YjsDatabaseKey.groups): YDatabaseGroups;
 
-  get (key: YjsDatabaseKey.sorts): YDatabaseSorts;
+  get(key: YjsDatabaseKey.sorts): YDatabaseSorts;
 
-  get (key: YjsDatabaseKey.field_settings): YDatabaseFieldSettings;
+  get(key: YjsDatabaseKey.field_settings): YDatabaseFieldSettings;
 
-  get (key: YjsDatabaseKey.field_orders): YDatabaseFieldOrders;
+  get(key: YjsDatabaseKey.field_orders): YDatabaseFieldOrders;
 
-  get (key: YjsDatabaseKey.row_orders): YDatabaseRowOrders;
+  get(key: YjsDatabaseKey.row_orders): YDatabaseRowOrders;
 
-  get (key: YjsDatabaseKey.calculations): YDatabaseCalculations;
+  get(key: YjsDatabaseKey.calculations): YDatabaseCalculations;
+
+  get(key: YjsDatabaseKey.is_inline): boolean;
+
+  // eslint-disable-next-line @typescript-eslint/unified-signatures
+  get(key: YjsDatabaseKey.embedded): boolean;
 }
 
-export type YDatabaseFieldOrders = Y.Array<unknown>; // [ { id: FieldId } ]
+export type YDatabaseFieldOrders = Y.Array<{ id: FieldId }>; // [ { id: FieldId } ]
 
-export type YDatabaseRowOrders = Y.Array<YDatabaseRowOrder>; // [ { id: RowId, height: number } ]
+export type YDatabaseRowOrders = Y.Array<{ id: RowId; height: number }>; // [ { id: RowId, height: number } ]
 
 export type YDatabaseGroups = Y.Array<YDatabaseGroup>;
 
@@ -565,131 +631,148 @@ export type GroupId = string;
 
 export interface YDatabaseLayoutSettings extends Y.Map<unknown> {
   // DatabaseViewLayout.Board
-  get (key: '1'): YDatabaseBoardLayoutSetting;
+  get(key: '1'): YDatabaseBoardLayoutSetting;
 
   // DatabaseViewLayout.Calendar
-  get (key: '2'): YDatabaseCalendarLayoutSetting;
+  get(key: '2'): YDatabaseCalendarLayoutSetting;
 }
 
 export interface YDatabaseBoardLayoutSetting extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.hide_ungrouped_column | YjsDatabaseKey.collapse_hidden_groups): boolean;
+  get(key: YjsDatabaseKey.hide_ungrouped_column | YjsDatabaseKey.collapse_hidden_groups): boolean;
 }
 
 export interface YDatabaseCalendarLayoutSetting extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.first_day_of_week | YjsDatabaseKey.field_id | YjsDatabaseKey.layout_ty): string;
+  get(key: YjsDatabaseKey.first_day_of_week | YjsDatabaseKey.field_id | YjsDatabaseKey.layout_ty): string;
+  get(key: YjsDatabaseKey.number_of_days): number;
 
-  get (key: YjsDatabaseKey.show_week_numbers | YjsDatabaseKey.show_weekends): boolean;
+  get(key: YjsDatabaseKey.show_week_numbers | YjsDatabaseKey.show_weekends): boolean;
 }
 
 export interface YDatabaseGroup extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): GroupId;
+  get(key: YjsDatabaseKey.id): GroupId;
 
-  get (key: YjsDatabaseKey.field_id): FieldId;
+  get(key: YjsDatabaseKey.field_id): FieldId;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.content): string;
+  get(key: YjsDatabaseKey.content): string; // "{"hide_empty":false,"condition":2}"
 
-  get (key: YjsDatabaseKey.groups): YDatabaseGroupColumns;
+  get(key: YjsDatabaseKey.groups): YDatabaseGroupColumns;
 }
 
-export type YDatabaseGroupColumns = Y.Array<YDatabaseGroupColumn>;
+export type YDatabaseGroupColumns = Y.Array<{ id: string; visible: boolean }>;
 
 export interface YDatabaseGroupColumn extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): string;
+  get(key: YjsDatabaseKey.id): string;
 
-  get (key: YjsDatabaseKey.visible): boolean;
-}
-
-export interface YDatabaseRowOrder extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): SortId;
-
-  get (key: YjsDatabaseKey.height): number;
+  get(key: YjsDatabaseKey.visible): boolean;
 }
 
 export interface YDatabaseSort extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): SortId;
+  get(key: YjsDatabaseKey.id): SortId;
 
-  get (key: YjsDatabaseKey.field_id): FieldId;
+  get(key: YjsDatabaseKey.field_id): FieldId;
 
-  get (key: YjsDatabaseKey.condition): string;
+  get(key: YjsDatabaseKey.condition): string;
 }
 
 export type FilterId = string;
 
 export interface YDatabaseFilter extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.id): FilterId;
+  get(key: YjsDatabaseKey.id): FilterId;
 
-  get (key: YjsDatabaseKey.field_id): FieldId;
+  get(key: YjsDatabaseKey.field_id): FieldId;
 
-  get (key: YjsDatabaseKey.type | YjsDatabaseKey.condition | YjsDatabaseKey.content | YjsDatabaseKey.filter_type): string;
+  get(key: YjsDatabaseKey.type | YjsDatabaseKey.condition | YjsDatabaseKey.content | YjsDatabaseKey.filter_type): string;
+
+  get(key: YjsDatabaseKey.children): YDatabaseFilters | YDatabaseFilter[] | undefined;
 }
 
 export interface YDatabaseCalculation extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.field_id): FieldId;
+  get(key: YjsDatabaseKey.field_id): FieldId;
 
-  get (key: YjsDatabaseKey.id | YjsDatabaseKey.type | YjsDatabaseKey.calculation_value): string;
+  get(key: YjsDatabaseKey.id | YjsDatabaseKey.type | YjsDatabaseKey.calculation_value): string;
 }
 
 export interface YDatabaseFieldSettings extends Y.Map<unknown> {
-  get (key: FieldId): YDatabaseFieldSetting;
+  get(key: FieldId): YDatabaseFieldSetting;
 }
 
 export interface YDatabaseFieldSetting extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.visibility): string;
+  get(key: YjsDatabaseKey.visibility): string;
 
-  get (key: YjsDatabaseKey.wrap): boolean;
+  get(key: YjsDatabaseKey.wrap): boolean;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.width): string;
+  get(key: YjsDatabaseKey.width): string;
 }
 
 export interface YDatabaseMetas extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.iid): string;
+  get(key: YjsDatabaseKey.iid): string;
+  get(key: YjsDatabaseKey.schema_version): string | number;
 }
 
 export interface YDatabaseFields extends Y.Map<YDatabaseField> {
-  get (key: FieldId): YDatabaseField;
+  get(key: FieldId): YDatabaseField;
 }
 
 export interface YDatabaseField extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.name): string;
+  get(key: YjsDatabaseKey.name): string;
 
-  get (key: YjsDatabaseKey.id): FieldId;
-
-  // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.icon): string;
+  get(key: YjsDatabaseKey.id): FieldId;
 
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.type): string;
+  get(key: YjsDatabaseKey.icon): string;
 
-  get (key: YjsDatabaseKey.type_option): YDatabaseFieldTypeOption;
+  // eslint-disable-next-line @typescript-eslint/unified-signatures
+  get(key: YjsDatabaseKey.type): string;
 
-  get (key: YjsDatabaseKey.is_primary): boolean;
+  get(key: YjsDatabaseKey.type_option): YDatabaseFieldTypeOption;
 
-  get (key: YjsDatabaseKey.last_modified): LastModified;
+  get(key: YjsDatabaseKey.is_primary): boolean;
+
+  get(key: YjsDatabaseKey.last_modified): LastModified;
 }
 
 export interface YDatabaseFieldTypeOption extends Y.Map<unknown> {
   // key is the field type
-  get (key: string): YMapFieldTypeOption;
+  get(key: string): YMapFieldTypeOption;
 }
 
 export interface YMapFieldTypeOption extends Y.Map<unknown> {
-  get (key: YjsDatabaseKey.content): string;
+  // single select, Multi select, File media
+  get(
+    key:
+      | YjsDatabaseKey.content
+      | YjsDatabaseKey.relation_field_id
+      | YjsDatabaseKey.target_field_id
+      | YjsDatabaseKey.condition_value
+  ): string;
 
+  // CreatedTime, LastEditedTime, DateTime
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.data): string;
+  get(key: YjsDatabaseKey.time_format): string | undefined;
 
+  // CreatedTime, LastEditedTime, DateTime
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.time_format): string;
+  get(key: YjsDatabaseKey.date_format): string | undefined;
 
+  // Relation
+  get(key: YjsDatabaseKey.database_id): DatabaseId;
+
+  get(key: YjsDatabaseKey.calculation_type | YjsDatabaseKey.show_as): number;
+
+  // Number
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.date_format): string;
+  get(key: YjsDatabaseKey.format): string;
 
-  get (key: YjsDatabaseKey.database_id): DatabaseId;
+  // LastEditedTime and CreatedTime
+  get(key: YjsDatabaseKey.include_time): boolean;
 
+  // AI Translate
   // eslint-disable-next-line @typescript-eslint/unified-signatures
-  get (key: YjsDatabaseKey.format): string;
+  get(key: YjsDatabaseKey.auto_fill): boolean;
+
+  get(key: YjsDatabaseKey.language): bigint;
 }
 
 export enum Types {
@@ -707,7 +790,8 @@ export enum CollabOrigin {
   Local = 'local',
   // from remote changes and never sync to remote.
   Remote = 'remote',
-
+  // from local changes manually applied to Yjs
+  LocalManual = 'local_manual',
 }
 
 export interface PublishViewPayload {
@@ -772,9 +856,9 @@ export interface PublishViewMetaData {
 export type AppendBreadcrumb = (view?: View) => void;
 
 export type CreateRowDoc = (rowKey: string) => Promise<YDoc>;
-export type LoadView = (viewId: string, isSubDocument?: boolean) => Promise<YDoc>;
+export type LoadView = (viewId: string, isSubDocument?: boolean, loadAwareness?: boolean) => Promise<YDoc>;
 
-export type LoadViewMeta = (viewId: string, onChange?: (meta: View | null) => void) => Promise<View>;
+export type LoadViewMeta = (viewId: string, onChange?: (meta: View | null) => void) => Promise<View | null>;
 
 export type DatabaseRelations = Record<DatabaseId, ViewId>;
 
@@ -789,6 +873,7 @@ export interface Workspace {
   };
   databaseStorageId: string;
   createdAt: string;
+  role?: Role;
 }
 
 export interface UserWorkspaceInfo {
@@ -812,6 +897,23 @@ export interface FolderView {
   isSpace: boolean;
   isPrivate: boolean;
   children: FolderView[];
+  accessLevel?: AccessLevel;
+}
+
+export enum AuthProvider {
+  GOOGLE = 'google',
+  APPLE = 'apple',
+  GITHUB = 'github',
+  DISCORD = 'discord',
+  PASSWORD = 'password',
+  MAGIC_LINK = 'magic_link',
+  SAML = 'saml',
+  PHONE = 'phone',
+  EMAIL = 'email',
+}
+
+export interface AuthProvidersResponse {
+  providers: AuthProvider[];
 }
 
 export interface User {
@@ -821,6 +923,7 @@ export interface User {
   avatar: string | null;
   uuid: string;
   latestWorkspaceId: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DuplicatePublishView {
@@ -828,6 +931,12 @@ export interface DuplicatePublishView {
   spaceViewId: string;
   collabType: Types;
   viewId: string;
+}
+
+export interface DuplicatePublishViewResponse {
+  viewId: string;
+  /** Mapping of database_id -> list of view_ids for databases created during duplication */
+  databaseMappings: Record<string, string[]>;
 }
 
 export enum ViewIconType {
@@ -846,17 +955,78 @@ export enum SpacePermission {
   Private = 1,
 }
 
-export interface ViewExtra {
+/**
+ * Represents the space info of a view.
+ * Aligned with Desktop/Flutter `SpaceInfo` struct.
+ *
+ * Two view types are supported:
+ * - Space view: A view associated with space info. Parent view that can contain normal views.
+ *   Child views inherit the space's permissions.
+ * - Normal view: Cannot contain space views and has no direct permission controls.
+ */
+export interface SpaceInfo {
+  /** Whether the view is a space view. */
   is_space: boolean;
+
+  /** The permission of the space view. Defaults to SpacePermission.Public if not set. */
+  space_permission?: SpacePermission;
+
+  /** The created time of the space view (timestamp). */
   space_created_at?: number;
+
+  /** The space icon. If not set, uses the default icon. */
   space_icon?: string;
+
+  /** The space icon color. Should be a valid hex color code: 0xFFA34AFD */
   space_icon_color?: string;
-  space_permission?: number;
+
+  /** Whether this is a hidden space. */
+  is_hidden_space?: boolean;
+}
+
+/**
+ * Information about a database view stored in the `extra` JSON field.
+ * Aligned with Desktop/Flutter `DatabaseViewExtra` struct.
+ * Used to track database container views and their children.
+ */
+export interface DatabaseViewExtra {
+  /** The database_id that this view is linked to. */
+  database_id?: string;
+
+  /**
+   * Whether this view is a database container (sidebar entry point).
+   * Container views are folder-like views that hold actual database views as children.
+   * When opening a container, the app should auto-select the first child view.
+   */
+  is_database_container?: boolean;
+
+  /**
+   * Whether this view is embedded/inline (created inside a document).
+   * Aligned with Desktop/Flutter and server-side `EXTRA_KEY_EMBEDDED`.
+   */
+  embedded?: boolean;
+}
+
+/**
+ * View cover configuration.
+ */
+export interface ViewCover {
+  type: CoverType;
+  value: string;
+  offset?: number;
+}
+
+/**
+ * Combined view extra data.
+ * This is the union of all extra types that can be stored in a view's extra field.
+ * The extra field is a JSON blob that may contain any combination of these properties.
+ */
+export interface ViewExtra extends SpaceInfo, DatabaseViewExtra {
+  /** Whether this view is pinned. */
   is_pinned?: boolean;
-  cover?: {
-    type: CoverType;
-    value: string;
-  };
+
+  /** The view's cover image/color configuration. */
+  cover?: ViewCover;
 }
 
 export interface View {
@@ -876,6 +1046,8 @@ export interface View {
   publisher_email?: string;
   publish_name?: string;
   publish_timestamp?: string;
+  parent_view_id?: string;
+  access_level?: AccessLevel;
 }
 
 export interface UpdatePublishConfigPayload {
@@ -895,6 +1067,25 @@ export interface Invitation {
   workspace_icon: string;
   member_count: number;
   status: 'Accepted' | 'Pending';
+}
+
+export interface GuestInvitation {
+  workspace_id: string;
+  workspace_name: string;
+  workspace_icon_url: string;
+  view_id: string;
+  page_name: string;
+  is_existing_member: boolean;
+}
+
+export interface GuestConversionCodeInfo {
+  workspace_name: string;
+  requester_avatar?: string;
+  requester_name: string;
+  workspace_icon_url?: string;
+  member_count: number;
+  guest_name: string;
+  guest_is_already_a_member: boolean;
 }
 
 export enum CoverType {
@@ -960,7 +1151,7 @@ export enum SubscriptionPlan {
   Free = 'free',
   Pro = 'pro',
   Team = 'team',
-  AIMax = 'ai_max'
+  AIMax = 'ai_max',
 }
 
 export enum SubscriptionInterval {
@@ -980,16 +1171,13 @@ export type Subscriptions = Subscription[];
 export interface UpdatePagePayload {
   name: string;
   icon?: {
-    ty: ViewIconType,
-    value: string,
+    ty: ViewIconType;
+    value: string;
   };
   extra?: Partial<ViewExtra>;
 }
 
-export interface ViewMetaCover {
-  type: CoverType;
-  value: string;
-}
+export type ViewMetaCover = ViewCover;
 
 export interface ViewMetaProps {
   icon?: ViewMetaIcon;
@@ -999,12 +1187,16 @@ export interface ViewMetaProps {
   workspaceId?: string;
   layout?: ViewLayout;
   visibleViewIds?: string[];
+  database_relations?: DatabaseRelations;
   extra?: ViewExtra | null;
   readOnly?: boolean;
   updatePage?: (viewId: string, data: UpdatePagePayload) => Promise<void>;
   uploadFile?: (file: File) => Promise<string>;
+  updatePageIcon?: (viewId: string, icon: { ty: ViewIconType; value: string }) => Promise<void>;
+  updatePageName?: (viewId: string, name: string) => Promise<void>;
   onEnter?: (text: string) => void;
   maxWidth?: number;
+  onFocus?: () => void;
 }
 
 export interface TextCount {
@@ -1024,7 +1216,7 @@ export interface ViewComponentProps {
   appendBreadcrumb?: AppendBreadcrumb;
   onRendered?: () => void;
   updatePage?: (viewId: string, data: UpdatePagePayload) => Promise<void>;
-  addPage?: (parentId: string, payload: CreatePagePayload) => Promise<string>;
+  addPage?: (parentId: string, payload: CreatePagePayload) => Promise<CreatePageResponse>;
   deletePage?: (viewId: string) => Promise<void>;
   openPageModal?: (viewId: string) => void;
   variant?: UIVariant;
@@ -1033,6 +1225,21 @@ export interface ViewComponentProps {
   onWordCountChange?: (viewId: string, props: TextCount) => void;
   uploadFile?: (file: File) => Promise<string>;
   requestInstance?: AxiosInstance | null;
+  generateAISummaryForRow?: (payload: GenerateAISummaryRowPayload) => Promise<string>;
+  generateAITranslateForRow?: (payload: GenerateAITranslateRowPayload) => Promise<string>;
+  loadDatabasePrompts?: (config: PromptDatabaseConfiguration) => Promise<{
+    rawDatabasePrompts: DatabasePrompt[];
+    fields: DatabasePromptField[];
+  }>;
+  testDatabasePromptConfig?: (viewId: string) => Promise<{
+    config: PromptDatabaseConfiguration;
+    fields: DatabasePromptField[];
+  }>;
+  updatePageIcon?: (viewId: string, icon: { ty: ViewIconType; value: string }) => Promise<void>;
+  updatePageName?: (viewId: string, name: string) => Promise<void>;
+  currentUser?: User;
+  getViewIdFromDatabaseId?: (databaseId: string) => Promise<string | null>;
+  loadDatabaseRelations?: () => Promise<DatabaseRelations | undefined>;
 }
 
 export interface CreatePagePayload {
@@ -1040,11 +1247,85 @@ export interface CreatePagePayload {
   name?: string;
 }
 
+export interface CreatePageResponse {
+  view_id: string;
+  database_id?: string;
+}
+
+export interface CreateDatabaseViewPayload {
+  parent_view_id: string;
+  database_id: string;
+  layout: ViewLayout;
+  name?: string;
+  /** Whether this view is embedded inside a document (e.g., database block). Defaults to false. */
+  embedded?: boolean;
+}
+
+export interface CreateDatabaseViewResponse {
+  view_id: string;
+  database_id: string;
+  database_update?: number[];
+}
+
+export enum DatabaseCsvImportMode {
+  Create = 'create',
+  Append = 'append',
+  Replace = 'replace',
+}
+
+export enum DatabaseCsvImportLayout {
+  Grid = 'grid',
+  Board = 'board',
+  Calendar = 'calendar',
+}
+
+export interface DatabaseCsvOptions {
+  has_header: boolean;
+  delimiter: string;
+  quote: string;
+  escape?: string;
+  encoding: string;
+  trim: boolean;
+}
+
+export interface DatabaseCsvImportRequest {
+  content_length: number;
+  md5_base64?: string;
+  mode: DatabaseCsvImportMode;
+  parent_view_id?: string;
+  database_id?: string;
+  name?: string;
+  layout: DatabaseCsvImportLayout;
+  csv: DatabaseCsvOptions;
+}
+
+export interface DatabaseCsvImportCreateResponse {
+  task_id: string;
+  presigned_url: string;
+  expires_in_secs: number;
+}
+
+export interface DatabaseCsvImportProgress {
+  rows_processed: number;
+  rows_total: number;
+}
+
+export type DatabaseCsvImportStatus = 'Pending' | 'Completed' | 'Failed' | 'Expire' | 'Cancel';
+
+export interface DatabaseCsvImportStatusResponse {
+  task_id: string;
+  status: DatabaseCsvImportStatus;
+  progress: DatabaseCsvImportProgress;
+  database_id?: string;
+  view_id?: string;
+  error?: string;
+}
+
 export interface CreateSpacePayload {
   name?: string;
   space_icon?: string;
   space_icon_color?: string;
-  space_permission?: SpacePermission, // 0 for public space, 1 for private space
+  space_permission?: SpacePermission; // 0 for public space, 1 for private space
 }
 
 export interface UpdateSpacePayload extends CreateSpacePayload {
@@ -1053,7 +1334,7 @@ export interface UpdateSpacePayload extends CreateSpacePayload {
 
 export interface QuickNoteEditorData {
   type: string;
-  delta: { insert: string, attributes?: Record<string, string | boolean | number> }[];
+  delta: { insert: string; attributes?: Record<string, string | boolean | number> }[];
   data?: BlockData;
   children: QuickNoteEditorData[];
 }
@@ -1061,7 +1342,7 @@ export interface QuickNoteEditorData {
 export interface QuickNote {
   id: string;
   title: string;
-  data: QuickNoteEditorData[],
+  data: QuickNoteEditorData[];
   created_at: string;
   last_updated_at: string;
 }
@@ -1079,4 +1360,103 @@ export enum SettingMenuItem {
   WORKSPACE = 'WORKSPACE',
   MEMBERS = 'MEMBERS',
   SITES = 'SITES',
+}
+
+export interface GenerateAISummaryRowPayload {
+  Content: {
+    // key = field name, value = cell data
+    [key: string]: string;
+  };
+}
+
+export interface GenerateAITranslateRowPayload {
+  cells: {
+    // field name
+    title: string;
+    // cell data
+    content: string;
+  }[];
+  language: string;
+  include_header?: boolean;
+}
+
+export type LoadDatabasePrompts = (config: PromptDatabaseConfiguration) => Promise<{
+  rawDatabasePrompts: DatabasePrompt[];
+  fields: DatabasePromptField[];
+}>;
+
+export type TestDatabasePromptConfig = (viewId: string) => Promise<{
+  config: PromptDatabaseConfiguration;
+  fields: DatabasePromptField[];
+}>;
+
+export interface DatabasePrompt {
+  id: string;
+  name: string;
+  content: string;
+  example: string;
+  category: string;
+}
+
+export interface DatabasePromptField {
+  id: string;
+  name: string;
+  isPrimary: boolean;
+  isSelect: boolean;
+}
+
+export interface DatabasePromptRow {
+  id: string;
+  data: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [fieldId: string]: any;
+  };
+}
+
+export enum MentionPersonRole {
+  Member = 1,
+  Guest = 2,
+  Contact = 3,
+}
+export interface MentionablePerson {
+  avatar_url: string | null;
+  cover_image_url: string | null;
+  custom_image_url: string | null;
+  description: string | null;
+  email: string;
+
+  name: string;
+  role: MentionPersonRole;
+  person_id: string;
+  invited: boolean;
+  last_mentioned_at: string | null;
+}
+
+export enum DateFormat {
+  Local = 0,
+  US = 1,
+  ISO = 2,
+  Friendly = 3,
+  DayMonthYear = 4,
+}
+
+export enum TimeFormat {
+  TwelveHour = 0,
+  TwentyFourHour = 1,
+}
+
+export interface IPeopleWithAccessType {
+  email: string;
+  name: string;
+  access_level?: number;
+  role: Role;
+  avatar_url: string;
+  pending_invitation: boolean;
+}
+
+export enum AccessLevel {
+  ReadOnly = 10,
+  ReadAndComment = 20,
+  ReadAndWrite = 30,
+  FullAccess = 50,
 }

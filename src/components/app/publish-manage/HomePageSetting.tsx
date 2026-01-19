@@ -1,14 +1,15 @@
-import { SubscriptionPlan, View } from '@/application/types';
-import { Popover } from '@/components/_shared/popover';
-import PageIcon from '@/components/_shared/view-icon/PageIcon';
 import { Button, CircularProgress, IconButton, OutlinedInput, Tooltip } from '@mui/material';
 import React, { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ReactComponent as SearchIcon } from '@/assets/icons/search.svg';
-import { ReactComponent as RemoveIcon } from '@/assets/icons/close.svg';
-import { ReactComponent as UpgradeIcon } from '@/assets/icons/upgrade.svg';
-
 import { useSearchParams } from 'react-router-dom';
+
+import { SubscriptionPlan, View } from '@/application/types';
+import { ReactComponent as RemoveIcon } from '@/assets/icons/close.svg';
+import { ReactComponent as SearchIcon } from '@/assets/icons/search.svg';
+import { ReactComponent as UpgradeIcon } from '@/assets/icons/upgrade.svg';
+import { Popover } from '@/components/_shared/popover';
+import PageIcon from '@/components/_shared/view-icon/PageIcon';
+import { isAppFlowyHosted } from '@/utils/subscription';
 
 interface HomePageSettingProps {
   onRemoveHomePage: () => Promise<void>;
@@ -17,15 +18,17 @@ interface HomePageSettingProps {
   publishViews: View[];
   isOwner: boolean;
   activePlan: SubscriptionPlan | null;
+  canEdit?: boolean;
 }
 
-function HomePageSetting ({
+function HomePageSetting({
   activePlan,
   onRemoveHomePage,
   onUpdateHomePage,
   homePage,
   publishViews,
   isOwner,
+  canEdit = true,
 }: HomePageSettingProps) {
   const [removeLoading, setRemoveLoading] = React.useState<boolean>(false);
   const [updateLoading, setUpdateLoading] = React.useState<boolean>(false);
@@ -35,38 +38,50 @@ function HomePageSetting ({
   const [searchText, setSearchText] = React.useState<string>('');
   const views = useMemo(() => {
     if (!searchText) return publishViews;
-    return publishViews.filter(view => view.name?.toLowerCase().includes(searchText.toLowerCase()));
+    return publishViews.filter((view) => view.name?.toLowerCase().includes(searchText.toLowerCase()));
   }, [publishViews, searchText]);
 
   const [, setSearch] = useSearchParams();
   const handleUpgrade = useCallback(async () => {
     if (!isOwner) return;
-    setSearch(prev => {
+    setSearch((prev) => {
       prev.set('action', 'change_plan');
       return prev;
     });
   }, [setSearch, isOwner]);
 
-  if (activePlan && activePlan !== SubscriptionPlan.Pro) {
+  // Don't show homepage setting when namespace is not editable (e.g., UUID namespace)
+  if (!canEdit) {
+    return null;
+  }
 
-    return <Tooltip title={!isOwner ? t('settings.sites.namespace.pleaseAskOwnerToSetHomePage') : undefined}>
-      <Button
-        variant={'contained'}
-        color={'secondary'}
-        size={'small'}
-        onClick={handleUpgrade}
-        endIcon={<UpgradeIcon />}
-      >
-        {t('subscribe.changePlan')}
-      </Button>
-    </Tooltip>;
+  if (activePlan && activePlan !== SubscriptionPlan.Pro) {
+    // Only show upgrade button on official hosts (self-hosted instances have Pro features enabled by default)
+    if (!isAppFlowyHosted()) {
+      return null;
+    }
+
+    return (
+      <Tooltip title={!isOwner ? t('settings.sites.namespace.pleaseAskOwnerToSetHomePage') : undefined}>
+        <Button
+          variant={'contained'}
+          color={'secondary'}
+          size={'small'}
+          onClick={handleUpgrade}
+          endIcon={<UpgradeIcon />}
+          data-testid="homepage-upgrade-button"
+        >
+          {t('subscribe.changePlan')}
+        </Button>
+      </Tooltip>
+    );
   }
 
   return (
-    <div className={'flex-1 flex items-center overflow-hidden'}>
+    <div className={'flex flex-1 items-center overflow-hidden'} data-testid="homepage-setting">
       <Tooltip title={isOwner ? homePage?.name : t('settings.sites.error.onlyWorkspaceOwnerCanChangeHomepage')}>
         <Button
-          onClick={e => {
+          onClick={(e) => {
             if (!isOwner) return;
             setAnchorEl(e.currentTarget);
           }}
@@ -76,21 +91,29 @@ function HomePageSetting ({
           }}
           className={'max-w-[120px] gap-1 overflow-hidden'}
           startIcon={
-            updateLoading ? <CircularProgress size={14} /> :
-              homePage ? <PageIcon
-                iconSize={18}
-                className={'text-sm'}
-                view={homePage}
-              /> : <SearchIcon className={'opacity-60'} />
+            updateLoading ? (
+              <CircularProgress size={14} />
+            ) : homePage ? (
+              <PageIcon iconSize={18} className={'text-sm'} view={homePage} />
+            ) : (
+              <SearchIcon className={'opacity-60'} />
+            )
           }
           size={'small'}
         >
-          {homePage ?
-            <span className={'truncate text-left'}>{homePage.name || t('menuAppHeader.defaultNewPageName')}</span> : t('settings.sites.selectHomePage')}
+          {homePage ? (
+            <span className={'truncate text-left'}>{homePage.name || t('menuAppHeader.defaultNewPageName')}</span>
+          ) : (
+            t('settings.sites.selectHomePage')
+          )}
         </Button>
       </Tooltip>
-      {homePage &&
-        <Tooltip title={isOwner ? t('settings.sites.clearHomePage') : t('settings.sites.error.onlyWorkspaceOwnerCanRemoveHomepage')}>
+      {homePage && (
+        <Tooltip
+          title={
+            isOwner ? t('settings.sites.clearHomePage') : t('settings.sites.error.onlyWorkspaceOwnerCanRemoveHomepage')
+          }
+        >
           <IconButton
             disabled={removeLoading}
             onClick={async (e) => {
@@ -106,10 +129,10 @@ function HomePageSetting ({
             size={'small'}
             className={'ml-1'}
           >
-            {removeLoading ? <CircularProgress size={14} /> :
-              <RemoveIcon className={'w-3 h-3'} />}
+            {removeLoading ? <CircularProgress size={14} /> : <RemoveIcon className={'h-3 w-3'} />}
           </IconButton>
-        </Tooltip>}
+        </Tooltip>
+      )}
       <Popover
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
@@ -118,9 +141,7 @@ function HomePageSetting ({
           paper: 'max-h-[500px] w-[320px] appflowy-scroller overflow-y-auto overflow-x-hidden',
         }}
       >
-        <div
-          className={'sticky w-full bg-bg-body z-[1] pr-2 p-4 top-0'}
-        >
+        <div className={'sticky top-0 z-[1] w-full bg-background-primary p-4 pr-2'}>
           <OutlinedInput
             value={searchText}
             fullWidth
@@ -134,8 +155,8 @@ function HomePageSetting ({
             }}
           />
         </div>
-        <div className={'flex flex-col gap-2 p-4 pt-0 pr-2 w-full '}>
-          {views.map(view => (
+        <div className={'flex w-full flex-col gap-2 p-4 pr-2 pt-0 '}>
+          {views.map((view) => (
             <Button
               color={'inherit'}
               key={view.view_id}
@@ -145,17 +166,12 @@ function HomePageSetting ({
                 setUpdateLoading(false);
                 setAnchorEl(null);
               }}
-              startIcon={<PageIcon
-                iconSize={16}
-                className={'text-sm w-4 h-4 flex items-center justify-center'}
-                view={view}
-              />}
-              className={'w-full p-1 px-2 justify-start overflow-hidden'}
+              startIcon={
+                <PageIcon iconSize={16} className={'flex h-4 w-4 items-center justify-center text-sm'} view={view} />
+              }
+              className={'w-full justify-start overflow-hidden p-1 px-2'}
             >
-              <span className={'truncate'}>
-                {view.name || t('menuAppHeader.defaultNewPageName')}
-              </span>
-
+              <span className={'truncate'}>{view.name || t('menuAppHeader.defaultNewPageName')}</span>
             </Button>
           ))}
         </div>

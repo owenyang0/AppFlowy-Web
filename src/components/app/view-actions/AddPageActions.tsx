@@ -1,128 +1,103 @@
-import { View, ViewLayout } from '@/application/types';
-import { notify } from '@/components/_shared/notify';
-import { ViewIcon } from '@/components/_shared/view-icon';
-import { useAppHandlers } from '@/components/app/app.hooks';
-import { Button } from '@mui/material';
-import CircularProgress from '@mui/material/CircularProgress';
 import React, { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
-function AddPageActions({ view, onClose }: {
-  view: View;
-  onClose: () => void;
-}) {
+import { View, ViewLayout } from '@/application/types';
+import { ViewIcon } from '@/components/_shared/view-icon';
+import { useAppHandlers } from '@/components/app/app.hooks';
+import { DropdownMenuGroup, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+
+function AddPageActions({ view }: { view: View }) {
   const { t } = useTranslation();
-  const {
-    addPage,
-    openPageModal,
-    toView,
-  } = useAppHandlers();
+  const { addPage, openPageModal, toView } = useAppHandlers();
 
-  const handleAddPage = useCallback(async(layout: ViewLayout, name?: string) => {
-    if(!addPage) return;
-    notify.default(
-      <span>
-        <CircularProgress size={20} />
-        <span className={'ml-2'}>{t('document.creating')}</span>
-      </span>,
-    );
-    try {
-      const viewId = await addPage(view.view_id, { layout, name });
+  const handleAddPage = useCallback(
+    async (layout: ViewLayout, name?: string) => {
+      if (!addPage) return;
+      toast.loading(t('document.creating'));
+      try {
+        const response = await addPage(view.view_id, { layout, name });
 
-      if(layout === ViewLayout.AIChat) {
-        void toView(viewId);
-      } else {
-        void openPageModal?.(viewId);
+        if (layout === ViewLayout.Document) {
+          void openPageModal?.(response.view_id);
+        } else {
+          void toView(response.view_id);
+        }
+
+        toast.dismiss();
+        // eslint-disable-next-line
+      } catch (e: any) {
+        toast.error(e.message);
       }
-
-      notify.clear();
-      // eslint-disable-next-line
-    } catch(e: any) {
-      notify.clear();
-      notify.error(e.message);
-    }
-  }, [addPage, openPageModal, t, toView, view.view_id]);
+    },
+    [addPage, openPageModal, t, toView, view.view_id]
+  );
 
   const actions: {
     label: string;
     icon: React.ReactNode;
+    testId?: string;
     disabled?: boolean;
-    onClick: (e: React.MouseEvent) => void;
-  }[] = useMemo(() => [
-    {
-      label: t('document.menuName'),
-      icon: <ViewIcon
-        layout={ViewLayout.Document}
-        size={'small'}
-      />,
-      onClick: () => {
-        void handleAddPage(ViewLayout.Document);
+    onSelect: () => void;
+  }[] = useMemo(
+    () => [
+      {
+        label: t('document.menuName'),
+        icon: <ViewIcon layout={ViewLayout.Document} size={'small'} />,
+        onSelect: () => {
+          void handleAddPage(ViewLayout.Document, t('menuAppHeader.defaultNewPageName'));
+        },
       },
-    },
-    // {
-    //   label: t('grid.menuName'),
-    //   disabled: true,
-    //   icon: <ViewIcon
-    //     layout={ViewLayout.Grid}
-    //     size={'medium'}
-    //   />,
-    //   onClick: () => {
-    //     void handleAddPage(ViewLayout.Grid, 'Table');
-    //   },
-    // },
-    // {
-    //   label: t('board.menuName'),
-    //   disabled: true,
-    //   icon: <ViewIcon
-    //     layout={ViewLayout.Board}
-    //     size={'medium'}
-    //   />,
-    //   onClick: () => {
-    //     void handleAddPage(ViewLayout.Board, 'Board');
-    //   },
-    // },
-    // {
-    //   label: t('calendar.menuName'),
-    //   disabled: true,
-    //   icon: <ViewIcon
-    //     layout={ViewLayout.Calendar}
-    //     size={'medium'}
-    //   />,
-    //   onClick: () => {
-    //     void handleAddPage(ViewLayout.Calendar, 'Calendar');
-    //   },
-    // },
-    {
-      label: t('chat.newChat'),
-      icon: <ViewIcon
-        layout={ViewLayout.AIChat}
-        size={'small'}
-      />,
-      onClick: () => {
-        void handleAddPage(ViewLayout.AIChat);
+      {
+        label: t('grid.menuName'),
+        icon: <ViewIcon layout={ViewLayout.Grid} size={'small'} />,
+        testId: 'add-grid-button',
+        onSelect: () => {
+          void handleAddPage(ViewLayout.Grid, t('document.plugins.database.newDatabase'));
+        },
       },
-    },
-  ], [handleAddPage, t]);
+      {
+        label: t('board.menuName'),
+        icon: <ViewIcon layout={ViewLayout.Board} size={'small'} />,
+        onSelect: () => {
+          void handleAddPage(ViewLayout.Board, t('document.plugins.database.newDatabase'));
+        },
+      },
+      {
+        label: t('calendar.menuName'),
+        icon: <ViewIcon layout={ViewLayout.Calendar} size={'medium'} />,
+        onSelect: () => {
+          void handleAddPage(ViewLayout.Calendar, t('document.plugins.database.newDatabase'));
+        },
+      },
+      {
+        label: t('chat.newChat'),
+        icon: <ViewIcon layout={ViewLayout.AIChat} size={'small'} />,
+        testId: 'add-ai-chat-button',
+        onSelect: () => {
+          void handleAddPage(ViewLayout.AIChat, t('menuAppHeader.defaultNewPageName'));
+        },
+      },
+    ],
+    [handleAddPage, t]
+  );
 
   return (
-    <div className={'flex flex-col gap-2 w-full p-1.5 min-w-[230px]'}>
-      {actions.map(action => (
-        <Button
+    <DropdownMenuGroup>
+      {actions.map((action) => (
+        <DropdownMenuItem
           key={action.label}
-          size={'small'}
+          data-testid={action.testId}
           disabled={action.disabled}
-          onClick={(e) => {
-            action.onClick(e);
-            onClose();
+          onSelect={() => {
+            action.onSelect();
           }}
-          className={'px-3 py-1 justify-start'}
-          color={'inherit'}
-          startIcon={action.icon}
         >
+          {action.icon}
           {action.label}
-        </Button>
+        </DropdownMenuItem>
       ))}
-    </div>
+    </DropdownMenuGroup>
   );
 }
 

@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { checkImage } from '@/utils/image';
-import LoadingDots from '@/components/_shared/LoadingDots';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { ReactComponent as ErrorOutline } from '@/assets/icons/error.svg';
+import LoadingDots from '@/components/_shared/LoadingDots';
+import { checkImage } from '@/utils/image';
 
 function Img({
   onLoad,
@@ -23,6 +24,8 @@ function Img({
     status: number;
     statusText: string;
   } | null>(null);
+  const previousBlobUrlRef = useRef<string>('');
+  const isMountedRef = useRef(true);
 
   const handleCheckImage = useCallback(async (url: string) => {
     setLoading(true);
@@ -36,16 +39,56 @@ function Img({
     const startTime = Date.now();
 
     const attemptCheck: () => Promise<boolean> = async () => {
+      // Don't proceed if component is unmounted
+      if (!isMountedRef.current) {
+        return false;
+      }
+
       try {
         const result = await checkImage(url);
 
+        // Don't update state if component is unmounted
+        if (!isMountedRef.current) {
+          // Revoke blob URL if component unmounted during fetch
+          if (result.ok && result.validatedUrl && result.validatedUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(result.validatedUrl);
+          }
+
+          return false;
+        }
+
         // Success case
         if (result.ok) {
+          /**
+           * Revoke previous blob URL to prevent memory leaks.
+           *
+           * When checkImage handles AppFlowy file storage URLs, it creates blob URLs via
+           * URL.createObjectURL(). These blob URLs must be explicitly revoked using
+           * URL.revokeObjectURL() to free memory, otherwise they persist until page reload.
+           *
+           * We only revoke if:
+           * - A previous blob URL exists
+           * - It's different from the new one (to avoid revoking the URL we're about to use)
+           * - It's actually a blob URL (not a regular HTTP URL)
+           *
+           * This prevents memory leaks when images change or during polling retries.
+           */
+          if (
+            previousBlobUrlRef.current &&
+            previousBlobUrlRef.current !== result.validatedUrl &&
+            previousBlobUrlRef.current.startsWith('blob:')
+          ) {
+            URL.revokeObjectURL(previousBlobUrlRef.current);
+          }
+
           setImgError(null);
           setLoading(false);
-          setLocalUrl(result.validatedUrl || '');
+          const newUrl = result.validatedUrl || '';
+
+          setLocalUrl(newUrl);
+          previousBlobUrlRef.current = newUrl;
           setTimeout(() => {
-            if (onLoad) {
+            if (onLoad && isMountedRef.current) {
               onLoad();
             }
           }, 200);
@@ -91,7 +134,17 @@ function Img({
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     void handleCheckImage(url);
+
+    // Cleanup: revoke blob URL when component unmounts or URL changes
+    return () => {
+      isMountedRef.current = false;
+      if (previousBlobUrlRef.current && previousBlobUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(previousBlobUrlRef.current);
+        previousBlobUrlRef.current = '';
+      }
+    };
   }, [handleCheckImage, url]);
 
   return (
@@ -112,7 +165,7 @@ function Img({
         className={'h-full bg-cover bg-center object-cover'}
       />
       {loading ? (
-        <div className={'absolute inset-0 flex h-full w-full items-center justify-center bg-bg-body'}>
+        <div className={'absolute inset-0 flex h-full w-full items-center justify-center bg-background-primary'}>
           <LoadingDots />
         </div>
       ) : imgError ? (

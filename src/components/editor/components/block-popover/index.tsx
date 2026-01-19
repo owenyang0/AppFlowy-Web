@@ -1,3 +1,6 @@
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { ReactEditor, useSlateStatic } from 'slate-react';
+
 import { YjsEditor } from '@/application/slate-yjs';
 import { findSlateEntryByBlockId } from '@/application/slate-yjs/utils/editor';
 import { BlockType } from '@/application/types';
@@ -5,9 +8,9 @@ import { calculateOptimalOrigins, Origins, Popover } from '@/components/_shared/
 import { usePopoverContext } from '@/components/editor/components/block-popover/BlockPopoverContext';
 import FileBlockPopoverContent from '@/components/editor/components/block-popover/FileBlockPopoverContent';
 import ImageBlockPopoverContent from '@/components/editor/components/block-popover/ImageBlockPopoverContent';
+import PDFBlockPopoverContent from '@/components/editor/components/block-popover/PDFBlockPopoverContent';
 import { useEditorContext } from '@/components/editor/EditorContext';
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { ReactEditor, useSlateStatic } from 'slate-react';
+
 import MathEquationPopoverContent from './MathEquationPopoverContent';
 import VideoBlockPopoverContent from './VideoBlockPopoverContent';
 
@@ -23,22 +26,20 @@ const defaultOrigins: Origins = {
 };
 
 function BlockPopover() {
-  const {
-    open,
-    anchorEl,
-    close,
-    type,
-    blockId,
-  } = usePopoverContext();
+  const { open, anchorEl, close, type, blockId } = usePopoverContext();
   const { setSelectedBlockIds } = useEditorContext();
   const editor = useSlateStatic() as YjsEditor;
   const [origins, setOrigins] = React.useState<Origins>(defaultOrigins);
 
   const handleClose = useCallback(() => {
     window.getSelection()?.removeAllRanges();
-    if(!blockId) return;
+    if (!blockId) return;
 
-    const [, path] = findSlateEntryByBlockId(editor, blockId);
+    const entry = findSlateEntryByBlockId(editor, blockId);
+
+    if(!entry) return;
+
+    const [, path] = entry;
 
     editor.select(editor.start(path));
     ReactEditor.focus(editor);
@@ -46,28 +47,18 @@ function BlockPopover() {
   }, [blockId, close, editor]);
 
   const content = useMemo(() => {
-    if(!blockId) return;
-    switch(type) {
+    if (!blockId) return;
+    switch (type) {
       case BlockType.FileBlock:
-        return <FileBlockPopoverContent
-          blockId={blockId}
-          onClose={handleClose}
-        />;
+        return <FileBlockPopoverContent blockId={blockId} onClose={handleClose} />;
+      case BlockType.PDFBlock:
+        return <PDFBlockPopoverContent blockId={blockId} onClose={handleClose} />;
       case BlockType.ImageBlock:
-        return <ImageBlockPopoverContent
-          blockId={blockId}
-          onClose={handleClose}
-        />;
+        return <ImageBlockPopoverContent blockId={blockId} onClose={handleClose} />;
       case BlockType.EquationBlock:
-        return <MathEquationPopoverContent
-          blockId={blockId}
-          onClose={handleClose}
-        />;
+        return <MathEquationPopoverContent blockId={blockId} onClose={handleClose} />;
       case BlockType.VideoBlock:
-        return <VideoBlockPopoverContent
-          blockId={blockId}
-          onClose={handleClose}
-        />;
+        return <VideoBlockPopoverContent blockId={blockId} onClose={handleClose} />;
       default:
         return null;
     }
@@ -76,8 +67,7 @@ function BlockPopover() {
   const paperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if(blockId) {
-
+    if (blockId) {
       setSelectedBlockIds?.([blockId]);
     } else {
       setSelectedBlockIds?.([]);
@@ -85,18 +75,24 @@ function BlockPopover() {
   }, [blockId, setSelectedBlockIds]);
 
   useEffect(() => {
-    if(!open) return;
+    if (!open) return;
     editor.deselect();
   }, [open, editor]);
 
   useEffect(() => {
     const panelPosition = anchorEl?.getBoundingClientRect();
 
-    if(open && panelPosition) {
-      const origins = calculateOptimalOrigins({
-        top: panelPosition.bottom,
-        left: panelPosition.left,
-      }, 560, (type === BlockType.ImageBlock || type === BlockType.VideoBlock) ? 400 : 200, defaultOrigins, 16);
+    if (open && panelPosition) {
+      const origins = calculateOptimalOrigins(
+        {
+          top: panelPosition.bottom,
+          left: panelPosition.left,
+        },
+        400,
+        type === BlockType.ImageBlock || type === BlockType.VideoBlock ? 366 : 200,
+        defaultOrigins,
+        16
+      );
 
       setOrigins({
         transformOrigin: {
@@ -111,22 +107,24 @@ function BlockPopover() {
     }
   }, [open, anchorEl, type]);
 
-  return <Popover
-    open={open}
-    onClose={handleClose}
-    anchorEl={anchorEl}
-    adjustOrigins={false}
-    slotProps={{
-      paper: {
-        ref: paperRef,
-        className: 'w-[560px] min-h-[200px]',
-      },
-    }}
-    {...origins}
-    disableRestoreFocus={true}
-  >
-    {content}
-  </Popover>;
+  return (
+    <Popover
+      open={open}
+      onClose={handleClose}
+      anchorEl={anchorEl}
+      adjustOrigins={false}
+      slotProps={{
+        paper: {
+          ref: paperRef,
+          className: 'w-[400px] max-h-[366px]',
+        },
+      }}
+      {...origins}
+      disableRestoreFocus={true}
+    >
+      {content}
+    </Popover>
+  );
 }
 
 export default BlockPopover;

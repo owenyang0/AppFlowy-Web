@@ -1,10 +1,14 @@
 import { AUTH_CALLBACK_PATH } from '@/application/session/sign_in';
 import NotFound from '@/components/error/NotFound';
 import LoginAuth from '@/components/login/LoginAuth';
+import withAppWrapper from '@/components/main/withAppWrapper';
 import PublishPage from '@/pages/PublishPage';
+
+import '@/styles/app.scss';
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import withAppWrapper from '@/components/main/withAppWrapper';
+
+import { Toaster } from '../ui/sonner';
 
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const AppRouter = lazy(() => import('@/components/app/AppRouter'));
@@ -12,9 +16,6 @@ const AsTemplatePage = lazy(() => import('@/pages/AsTemplatePage'));
 const AcceptInvitationPage = lazy(() => import('@/pages/AcceptInvitationPage'));
 const AfterPaymentPage = lazy(() => import('@/pages/AfterPaymentPage'));
 const ImportPage = lazy(() => import('@/pages/ImportPage'));
-
-import '@/styles/app.scss';
-import { Toaster } from '../ui/sonner';
 
 const AppMain = withAppWrapper(() => {
   return (
@@ -74,10 +75,15 @@ const AppMain = withAppWrapper(() => {
   );
 });
 
-function App () {
+function App() {
 
   return (
-    <BrowserRouter>
+    <BrowserRouter
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
       <AppMain />
       <Toaster />
     </BrowserRouter>

@@ -1,12 +1,16 @@
+import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSlateStatic } from 'slate-react';
+
 import { YjsEditor } from '@/application/slate-yjs';
 import { CustomEditor } from '@/application/slate-yjs/command';
 import { getBlockEntry } from '@/application/slate-yjs/utils/editor';
 import { BlockType } from '@/application/types';
-import React, { useCallback } from 'react';
-import ActionButton from './ActionButton';
-import { useTranslation } from 'react-i18next';
-import { useSlateStatic } from 'slate-react';
 import { ReactComponent as NumberedListSvg } from '@/assets/icons/numbered_list.svg';
+
+import ActionButton from './ActionButton';
+
+
 
 export function NumberedList() {
   const { t } = useTranslation();
@@ -15,7 +19,11 @@ export function NumberedList() {
 
   const onClick = useCallback(() => {
     try {
-      const [node] = getBlockEntry(editor);
+      const entry = getBlockEntry(editor);
+
+      if (!entry) return;
+
+      const [node] = entry;
 
       if (!node) return;
 

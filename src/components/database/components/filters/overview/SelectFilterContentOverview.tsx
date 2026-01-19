@@ -1,12 +1,13 @@
-import { YDatabaseField } from '@/application/types';
+import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   parseSelectOptionTypeOptions,
   SelectOptionFilter,
   SelectOptionFilterCondition,
 } from '@/application/database-yjs';
-import React, { useMemo } from 'react';
+import { YDatabaseField } from '@/application/types';
 
-import { useTranslation } from 'react-i18next';
 
 function SelectFilterContentOverview({ filter, field }: { filter: SelectOptionFilter; field: YDatabaseField }) {
   const typeOption = parseSelectOptionTypeOptions(field);
@@ -16,21 +17,25 @@ function SelectFilterContentOverview({ filter, field }: { filter: SelectOptionFi
 
     const options = filter.optionIds
       .map((optionId) => {
-        const option = typeOption?.options?.find((option) => option.id === optionId);
+      const option = typeOption?.options?.find((option) => option?.id === optionId);
 
         return option?.name;
       })
+      .filter(Boolean)
       .join(', ');
 
     switch (filter.condition) {
-      case SelectOptionFilterCondition.OptionIs:
-        return `: ${options}`;
       case SelectOptionFilterCondition.OptionIsNot:
+      case SelectOptionFilterCondition.OptionDoesNotContain:
         return `: ${t('grid.textFilter.choicechipPrefix.isNot')} ${options}`;
       case SelectOptionFilterCondition.OptionIsEmpty:
         return `: ${t('grid.textFilter.choicechipPrefix.isEmpty')}`;
       case SelectOptionFilterCondition.OptionIsNotEmpty:
         return `: ${t('grid.textFilter.choicechipPrefix.isNotEmpty')}`;
+      case SelectOptionFilterCondition.OptionContains:
+      case SelectOptionFilterCondition.OptionIs:
+        return `: ${options}`;
+
       default:
         return '';
     }

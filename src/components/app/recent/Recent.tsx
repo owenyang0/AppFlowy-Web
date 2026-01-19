@@ -1,12 +1,13 @@
+import dayjs from 'dayjs';
+import { groupBy, sortBy } from 'lodash-es';
+import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { UIVariant } from '@/application/types';
 import OutlineItem from '@/components/_shared/outline/OutlineItem';
 import RecentListSkeleton from '@/components/_shared/skeleton/RecentListSkeleton';
 import { useAppHandlers } from '@/components/app/app.hooks';
 import { useRecent } from '@/components/app/recent/useRecent';
-import dayjs from 'dayjs';
-import { groupBy, sortBy } from 'lodash-es';
-import React, { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 enum RecentGroup {
   today = 'today',
@@ -14,10 +15,8 @@ enum RecentGroup {
   Others = 'Others',
 }
 
-export function Recent () {
-  const {
-    views: recentViews,
-  } = useRecent();
+export function Recent() {
+  const { views: recentViews } = useRecent();
 
   const navigateToView = useAppHandlers().toView;
   const { t } = useTranslation();
@@ -36,9 +35,11 @@ export function Recent () {
 
   const groupByViews = useMemo(() => {
     if (!recentViews?.length) {
-      return <div className={'text-text-caption w-full text-center text-sm font-medium'}>
-        {t('findAndReplace.noResult')}
-      </div>;
+      return (
+        <div className={'w-full text-center text-sm font-medium text-text-secondary'}>
+          {t('findAndReplace.noResult')}
+        </div>
+      );
     }
 
     return sortBy(Object.entries(groupByViewsWithDay), ([key]) => {
@@ -50,40 +51,28 @@ export function Recent () {
         [RecentGroup.Others]: t('sideBar.earlier'),
       };
 
-      return <div
-        className={'flex flex-col gap-2'}
-        key={key}
-      >
-        <div className={'text-xs text-text-caption py-1 px-1'}>{timeLabel[key]}</div>
-        <div className={'px-1'}>
-          {value.map((view) =>
-            <OutlineItem
-              variant={UIVariant.Recent}
-              key={view.view_id}
-              view={view}
-              navigateToView={navigateToView}
-            />,
-          )}
+      return (
+        <div className={'flex flex-col gap-2'} key={key}>
+          <div className={'px-1 py-1 text-xs text-text-secondary'}>{timeLabel[key]}</div>
+          <div className={'px-1'}>
+            {value.map((view) => (
+              <OutlineItem variant={UIVariant.Recent} key={view.view_id} view={view} navigateToView={navigateToView} />
+            ))}
+          </div>
         </div>
-
-      </div>;
+      );
     });
   }, [groupByViewsWithDay, navigateToView, recentViews?.length, t]);
 
   return (
-    <div className={'flex w-[268px] flex-col gap-1 py-[10px] px-[10px]'}>
-      <div className={'flex h-fit my-0.5 w-full flex-col gap-2'}>
-        <div
-          className={
-            'flex items-center w-full gap-0.5 px-1 rounded-[8px] pb-1 text-sm'
-          }
-        >
-          <div className={'flex-1 truncate text-text-caption'}>{t('sideBar.recent')}</div>
+    <div className={'flex w-[268px] flex-col gap-1 px-[10px] py-[10px]'}>
+      <div className={'my-0.5 flex h-fit w-full flex-col gap-2'}>
+        <div className={'flex w-full items-center gap-0.5 rounded-[8px] px-1 pb-1 text-sm'}>
+          <div className={'flex-1 truncate text-text-secondary'}>{t('sideBar.recent')}</div>
         </div>
       </div>
 
       {recentViews ? groupByViews : <RecentListSkeleton />}
-
     </div>
   );
 }
