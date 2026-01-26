@@ -170,6 +170,13 @@ export default defineConfig({
     watch: {
       ignored: ['node_modules'],
     },
+    proxy: {
+      '/gotrue': {
+        target: 'http://localhost:9999',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gotrue/, ''),
+      },
+    },
     cors: false,
     sourcemapIgnoreList: false,
   },
@@ -239,5 +246,12 @@ export default defineConfig({
       'i18next-resources-to-backend',
       'react-i18next'
     ],
+  },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: 'modern-compiler',
+      },
+    },
   },
 });

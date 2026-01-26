@@ -274,6 +274,9 @@ export enum ViewLayout {
   Board = 2,
   Calendar = 3,
   AIChat = 4,
+  Chart = 5,
+  List = 6,
+  Gallery = 7,
 }
 
 export enum YjsEditorKey {
@@ -577,6 +580,9 @@ export enum DatabaseViewLayout {
   Grid = 0,
   Board = 1,
   Calendar = 2,
+  Chart = 3,
+  List = 4,
+  Gallery = 5,
 }
 
 export interface YDatabaseView extends Y.Map<unknown> {
@@ -730,7 +736,7 @@ export interface YDatabaseField extends Y.Map<unknown> {
 
   get(key: YjsDatabaseKey.is_primary): boolean;
 
-  get(key: YjsDatabaseKey.last_modified): LastModified;
+  get(key: YjsDatabaseKey.created_at | YjsDatabaseKey.last_modified): LastModified;
 }
 
 export interface YDatabaseFieldTypeOption extends Y.Map<unknown> {
